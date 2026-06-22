@@ -16,7 +16,8 @@ def load_random_pages():
     """Main loop to fetch and prompt user to browse random Wikipedia articles."""
     while True:
         try:
-            response = requests.get(API_URL, timeout=10)
+            headers = {'User-Agent': 'WikipediaRandomExplorer/1.0 (contact: support@kai9987kai.co.uk)'}
+            response = requests.get(API_URL, headers=headers, timeout=10)
             response.raise_for_status()
             json_data = response.json()
         except requests.exceptions.RequestException as e:

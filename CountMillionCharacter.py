@@ -317,21 +317,20 @@ def main():
     
     source = "Shakespeare Demo"
     if args.file:
-        try:
-            with open(args.file, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            source = f"File: {args.file}"
-        except OSError as e:
-            print(f"[-] Error reading file: {e}")
-            sys.exit(1)
-    else:
-        # Check if stdin has content (is not a TTY)
-        if not sys.stdin.isatty():
+        if args.file == '-':
             content = sys.stdin.read()
             source = "Standard Input"
         else:
-            # Fallback to the hardcoded wordstring
-            content = wordstring
+            try:
+                with open(args.file, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                source = f"File: {args.file}"
+            except OSError as e:
+                print(f"[-] Error reading file: {e}")
+                sys.exit(1)
+    else:
+        # Fallback to the hardcoded wordstring
+        content = wordstring
             
     print(f"[*] Processing word frequencies from: {source}...")
     wordlist, word_counts = process_text(content)
