@@ -1,59 +1,147 @@
-# Guess the Number - CodeSkulptor / SimpleGUI version
+# Guess the Number Deluxe - CodeSkulptor / SimpleGUI
 
 import simplegui
 import random
+import math
 
+
+# -------------------------------------------------
 # Game state
+# -------------------------------------------------
+
 secret_number = 0
 current_range = 100
 remaining_guesses = 0
+max_guesses = 0
 
+lower_bound = 0
+upper_bound = 99
+guess_history = []
+
+games_played = 0
+wins = 0
+streak = 0
+best_streak = 0
+
+hint_used = False
+status_text = ""
+
+
+# -------------------------------------------------
+# Helpers
+# -------------------------------------------------
 
 def guesses_for_range(number_range):
-    """Return a fair number of guesses for the selected range."""
-    if number_range == 100:
-        return 7
-    return 10
+    """Return the ideal number of guesses for binary search."""
+    return int(math.ceil(math.log(number_range) / math.log(2)))
 
 
 def set_status(message):
-    """Update both console and on-screen status."""
+    """Show a message in both the console and interface."""
+    global status_text
+
+    status_text = message
     print(message)
     status_label.set_text(message)
 
 
-def new_game():
-    """Start a fresh game using the currently selected range."""
-    global secret_number, remaining_guesses
+def range_text():
+    """Return the currently valid possible number range."""
+    return str(lower_bound) + " to " + str(upper_bound)
+
+
+# -------------------------------------------------
+# Game logic
+# -------------------------------------------------
+
+def new_game(message=""):
+    """Start a fresh game using the selected range."""
+    global secret_number, remaining_guesses, max_guesses
+    global lower_bound, upper_bound, guess_history, hint_used, games_played
 
     secret_number = random.randrange(0, current_range)
-    remaining_guesses = guesses_for_range(current_range)
 
-    set_status(
-        "New game: guess a number from 0 to " +
+    max_guesses = guesses_for_range(current_range)
+    remaining_guesses = max_guesses
+
+    lower_bound = 0
+    upper_bound = current_range - 1
+
+    guess_history = []
+    hint_used = False
+    games_played += 1
+
+    game_message = (
+        "New game: choose a number from 0 to " +
         str(current_range - 1) +
-        " | Guesses left: " +
-        str(remaining_guesses)
+        ". You have " +
+        str(remaining_guesses) +
+        " guesses."
     )
+
+    if message:
+        game_message = message + " " + game_message
+
+    set_status(game_message)
 
 
 def range_of_100():
-    """Switch to the 0-99 game."""
+    """Switch game mode to 0-99."""
     global current_range
+
     current_range = 100
-    new_game()
+    new_game("Range changed to 0-99.")
 
 
 def range_of_1000():
-    """Switch to the 0-999 game."""
+    """Switch game mode to 0-999."""
     global current_range
+
     current_range = 1000
-    new_game()
+    new_game("Range changed to 0-999.")
+
+
+def reset_score():
+    """Reset all player statistics."""
+    global games_played, wins, streak, best_streak
+
+    games_played = 0
+    wins = 0
+    streak = 0
+    best_streak = 0
+
+    new_game("Scoreboard reset.")
+
+
+def use_hint():
+    """Give one useful but non-spoiling hint each game."""
+    global hint_used
+
+    if hint_used:
+        set_status("You have already used your hint this round.")
+        return
+
+    hint_used = True
+
+    midpoint = (lower_bound + upper_bound) // 2
+
+    if secret_number % 2 == 0:
+        parity = "even"
+    else:
+        parity = "odd"
+
+    set_status(
+        "Hint: the number is " +
+        parity +
+        ". A sensible next guess is near " +
+        str(midpoint) + "."
+    )
 
 
 def input_guess(guess):
-    """Handle and evaluate the player's guess."""
-    global remaining_guesses
+    """Validate and process the player's guess."""
+    global remaining_guesses, lower_bound, upper_bound
+    global wins, streak, best_streak
 
     try:
         player_guess = int(guess.strip())
@@ -63,54 +151,166 @@ def input_guess(guess):
 
     if player_guess < 0 or player_guess >= current_range:
         set_status(
-            "Enter a number from 0 to " +
+            "Enter a number between 0 and " +
             str(current_range - 1) + "."
         )
         return
 
+    if player_guess < lower_bound or player_guess > upper_bound:
+        set_status(
+            "That number has already been ruled out. Try between " +
+            range_text() + "."
+        )
+        return
+
     remaining_guesses -= 1
+    guess_history.append(player_guess)
+
     print("")
     print("Your guess:", player_guess)
 
     if player_guess == secret_number:
-        set_status(
-            "Correct! " + str(secret_number) +
-            " was the number. Starting a new game..."
+        wins += 1
+        streak += 1
+
+        if streak > best_streak:
+            best_streak = streak
+
+        new_game(
+            "Correct! " +
+            str(secret_number) +
+            " was the number. Great work!"
         )
-        new_game()
 
     elif remaining_guesses == 0:
-        set_status(
+        streak = 0
+
+        new_game(
             "Out of guesses. The number was " +
-            str(secret_number) +
-            ". Starting a new game..."
+            str(secret_number) + "."
         )
-        new_game()
 
     elif player_guess > secret_number:
+        upper_bound = player_guess - 1
+
         set_status(
-            "Too high. Guesses left: " +
+            "Too high. Try between " +
+            range_text() +
+            ". Guesses left: " +
             str(remaining_guesses)
         )
 
     else:
+        lower_bound = player_guess + 1
+
         set_status(
-            "Too low. Guesses left: " +
+            "Too low. Try between " +
+            range_text() +
+            ". Guesses left: " +
             str(remaining_guesses)
         )
 
 
-# Build interface
-frame = simplegui.create_frame("Guess The Number", 420, 220)
+# -------------------------------------------------
+# Canvas display
+# -------------------------------------------------
+
+def draw(canvas):
+    """Draw the live game dashboard."""
+
+    canvas.draw_text("GUESS THE NUMBER", (18, 35), 28, "Aqua")
+
+    canvas.draw_text(
+        "Selected range: 0-" + str(current_range - 1),
+        (18, 70),
+        18,
+        "White"
+    )
+
+    canvas.draw_text(
+        "Known possible range: " + range_text(),
+        (18, 100),
+        18,
+        "Yellow"
+    )
+
+    canvas.draw_text(
+        "Guesses remaining: " +
+        str(remaining_guesses) +
+        " / " +
+        str(max_guesses),
+        (18, 130),
+        18,
+        "White"
+    )
+
+    canvas.draw_text(
+        "Wins: " + str(wins) +
+        "   Games: " + str(games_played) +
+        "   Streak: " + str(streak) +
+        "   Best: " + str(best_streak),
+        (18, 160),
+        16,
+        "Lime"
+    )
+
+    if guess_history:
+        recent_guesses = guess_history[-8:]
+        history_text = "Recent guesses: " + str(recent_guesses)
+    else:
+        history_text = "Recent guesses: none"
+
+    canvas.draw_text(history_text, (18, 195), 15, "White")
+
+    # Guess progress bar
+    bar_start = 18
+    bar_end = 410
+    bar_y = 235
+
+    canvas.draw_line(
+        (bar_start, bar_y),
+        (bar_end, bar_y),
+        14,
+        "Gray"
+    )
+
+    if max_guesses > 0:
+        progress = float(remaining_guesses) / max_guesses
+        active_end = bar_start + ((bar_end - bar_start) * progress)
+
+        canvas.draw_line(
+            (bar_start, bar_y),
+            (active_end, bar_y),
+            14,
+            "Lime"
+        )
+
+    canvas.draw_text(
+        "Use logic: each answer narrows the possible range.",
+        (18, 280),
+        14,
+        "Aqua"
+    )
+
+
+# -------------------------------------------------
+# Interface
+# -------------------------------------------------
+
+frame = simplegui.create_frame("Guess The Number Deluxe", 450, 310)
+frame.set_canvas_background("MidnightBlue")
 
 frame.add_label("Choose a range, then enter a guess.")
-frame.add_button("New Game", new_game, 140)
-frame.add_button("Range: 0-99", range_of_100, 140)
-frame.add_button("Range: 0-999", range_of_1000, 140)
+frame.add_button("New Game", new_game, 150)
+frame.add_button("Range: 0-99", range_of_100, 150)
+frame.add_button("Range: 0-999", range_of_1000, 150)
+frame.add_button("Use Hint", use_hint, 150)
+frame.add_button("Reset Score", reset_score, 150)
+
 frame.add_input("Enter your guess", input_guess, 160)
 
 status_label = frame.add_label("")
+frame.set_draw_handler(draw)
 
-# Start game
 frame.start()
 new_game()
