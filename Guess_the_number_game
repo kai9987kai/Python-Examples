@@ -1,45 +1,116 @@
-# using codeSkulpter
+# Guess the Number - CodeSkulptor / SimpleGUI version
 
 import simplegui
 import random
 
+# Game state
+secret_number = 0
+current_range = 100
+remaining_guesses = 0
+
+
+def guesses_for_range(number_range):
+    """Return a fair number of guesses for the selected range."""
+    if number_range == 100:
+        return 7
+    return 10
+
+
+def set_status(message):
+    """Update both console and on-screen status."""
+    print(message)
+    status_label.set_text(message)
+
 
 def new_game():
-    
-    global num
-    print("new game")
-    
+    """Start a fresh game using the currently selected range."""
+    global secret_number, remaining_guesses
+
+    secret_number = random.randrange(0, current_range)
+    remaining_guesses = guesses_for_range(current_range)
+
+    set_status(
+        "New game: guess a number from 0 to " +
+        str(current_range - 1) +
+        " | Guesses left: " +
+        str(remaining_guesses)
+    )
+
 
 def range_of_100():
-    global num
-    num = random.randrange(0,100)
-    print("your range is 0-100")
+    """Switch to the 0-99 game."""
+    global current_range
+    current_range = 100
+    new_game()
+
 
 def range_of_1000():
-    global num
-    num = random.randrange(0,1000)
-    print("range is 0-1000")
-    
+    """Switch to the 0-999 game."""
+    global current_range
+    current_range = 1000
+    new_game()
+
+
 def input_guess(guess):
-    global num
-    print("Your Guess is " , guess)
-    num1 = int(guess)
-    if num1 == num:
-        print ("Correct")
-    elif num1 >= num:
-        print ("Greater")
-    elif num1 <= num:
-        print ("Lower")
-            
-    
+    """Handle and evaluate the player's guess."""
+    global remaining_guesses
 
-frame = simplegui.create_frame("Guess The Number",200,200)
-frame.add_button("range[0-1000)",range1000)
-frame.add_button("range[0-100)",range100)
-frame.add_input("enter your guess",input_guess,200)
+    try:
+        player_guess = int(guess.strip())
+    except ValueError:
+        set_status("Please enter a whole number.")
+        return
+
+    if player_guess < 0 or player_guess >= current_range:
+        set_status(
+            "Enter a number from 0 to " +
+            str(current_range - 1) + "."
+        )
+        return
+
+    remaining_guesses -= 1
+    print("")
+    print("Your guess:", player_guess)
+
+    if player_guess == secret_number:
+        set_status(
+            "Correct! " + str(secret_number) +
+            " was the number. Starting a new game..."
+        )
+        new_game()
+
+    elif remaining_guesses == 0:
+        set_status(
+            "Out of guesses. The number was " +
+            str(secret_number) +
+            ". Starting a new game..."
+        )
+        new_game()
+
+    elif player_guess > secret_number:
+        set_status(
+            "Too high. Guesses left: " +
+            str(remaining_guesses)
+        )
+
+    else:
+        set_status(
+            "Too low. Guesses left: " +
+            str(remaining_guesses)
+        )
 
 
+# Build interface
+frame = simplegui.create_frame("Guess The Number", 420, 220)
+
+frame.add_label("Choose a range, then enter a guess.")
+frame.add_button("New Game", new_game, 140)
+frame.add_button("Range: 0-99", range_of_100, 140)
+frame.add_button("Range: 0-999", range_of_1000, 140)
+frame.add_input("Enter your guess", input_guess, 160)
+
+status_label = frame.add_label("")
+
+# Start game
 frame.start()
-
-
 new_game()
