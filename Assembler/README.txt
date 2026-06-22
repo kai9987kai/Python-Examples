@@ -11,6 +11,8 @@ You can use many texfiles as input. These will be interpret one by one.
 
 You find some examples in the directory 'examples'.
 
+Additional example files demonstrate comparisons and jumps (`examples/code5.txt`), stack save/restore (`examples/code6.txt`), and console input (`examples/code7.txt`).
+
 For instance
 
 ``` 
