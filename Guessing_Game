@@ -1,20 +1,47 @@
 import random
-userGuess = int(input("Enter your guessed no. b/w 0-100:"))
-a = comGuess = random.randint(0,100)
 
 
-while true:
-comGuess=random.randint(0,100)
-if userGuess>comGuess:
-    print("Guess Higher")
-     comGuess = random.randint(a,100)
-     a++
+def get_guess(low, high):
+    while True:
+        try:
+            guess = int(input(f"Enter your guess ({low}-{high}): "))
+            if low <= guess <= high:
+                return guess
+            print(f"Please enter a number between {low} and {high}.")
+        except ValueError:
+            print("That is not a valid whole number.")
 
-elif userGuess < comGuess:
-    print("Guess Lower")
-     comGuess = random.randint(0,a)
-     a++
 
-else :
-    print ("Guessed Corectly")
-    break
+def play_game():
+    low = 0
+    high = 100
+    secret_number = random.randint(low, high)
+    attempts = 0
+
+    print("=== Guess the Number ===")
+    print("I have chosen a number between 0 and 100.")
+
+    while True:
+        guess = get_guess(low, high)
+        attempts += 1
+
+        if guess < secret_number:
+            print("Too low — guess higher.")
+            low = guess + 1
+
+        elif guess > secret_number:
+            print("Too high — guess lower.")
+            high = guess - 1
+
+        else:
+            print(f"Correct! You guessed {secret_number} in {attempts} attempts.")
+            break
+
+
+while True:
+    play_game()
+
+    again = input("Play again? (y/n): ").strip().lower()
+    if again != "y":
+        print("Thanks for playing!")
+        break
