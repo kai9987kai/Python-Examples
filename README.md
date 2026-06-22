@@ -1,68 +1,77 @@
+# Python Examples Collection
 
-# My Python Examples.
+A collection of useful, modernized, and dependency-free (or standard-library primary) Python scripts. This repository features utility tools, automation scripts, desktop GUI applications, and API integrations.
 
-Here is more detailed information about the scripts I have written.  I do not consider myself a programmer; I create these little programs as experiments to play with the language or to solve problems for myself.  I would gladly accept pointers from others to improve the code and make it more efficient, or simplify the code.  If you would like to make any comments, then please feel free to email me at support@kai9987kai.co.uk
-These scripts are very important functions that help reduce the workload on people.
-In the scripts, the comments and other documents are lined up correctly when they are viewed in [Notepad++](https://notepad-plus-plus.org/). This is what I used to code Python scripts.
+---
 
-- [batch_file_rename.py](https://github.com/geekcomputers/Python/blob/master/batch_file_rename.py) - This batch renames a group of files in a given directory, once you pass the current and the new extensions.
+## 📂 Table of Contents
+- [🖥️ Desktop GUI Applications](#-desktop-gui-applications)
+- [⏱️ Interactive Command-Line Utilities](#-interactive-command-line-utilities)
+- [📁 File & System Automation Tools](#-file--system-automation-tools)
+- [🌐 Network, Web & API Tools](#-network-web--api-tools)
+- [🧪 Math & Algorithms](#-math--algorithms)
+- [⚙️ Setup & Verification](#️-setup--verification)
 
-- [create_dir_if_not_there.py](https://github.com/geekcomputers/Python/blob/master/create_dir_if_not_there.py) - Checks to see if a directory exists in the users home directory, if not then create it.
+---
 
-- [Fast Youtube Downloader](https://github.com/geekcomputers/Python/blob/master/youtube-downloader%20fast.py) - Downloads YouTube videos quickly with parallel threads using aria2c
+## 🖥️ Desktop GUI Applications
 
-- [Google Image Downloader](https://github.com/geekcomputers/Python/tree/master/Google%20Image%20Downloader) - Query the specific term and retrieve images from the google image database.
+*   **[game_guess_number_gui.py](game_guess_number_gui.py)** - A beautiful desktop implementation of the classic "Guess the Number" game using Tkinter. Features color-coded hot/cold temperature indicators, scoring, and history listbox.
+*   **[AutoClicker.py](AutoClicker.py)** - Multi-threaded mouse auto-clicker utilizing Tkinter. Clicking tasks are processed in background threads to keep the GUI responsive. Includes start/stop hotkeys and dependency safety dialogues.
+*   **[calculator.py](calculator.py)** - Interactive calculator with UI integrations. Modernized with safe math functions (`sin`, `cos`, `sqrt`) and cleaned of interactive import locks.
+*   **[SimpleCalculator.json](SimpleCalculator.json)** - JSON configuration metadata for calculator profiles.
 
-- [dir_test.py](https://github.com/geekcomputers/Python/blob/master/dir_test.py) - Tests to see if the directory `testdir` exists, if not it will create the directory for you.
+---
 
-- [env_check.py](https://github.com/geekcomputers/Python/blob/master/env_check.py) - This script will check to see if all of the environment variables required are set.
+## ⏱️ Interactive Command-Line Utilities
 
-- [fileinfo.py](https://github.com/geekcomputers/Python/blob/master/fileinfo.py) - Shows file information for a given file.
+*   **[pomodoro_timer.py](pomodoro_timer.py)** - Professional Pomodoro CLI timer. Tracks sessions (Work, Short Break, Long Break) with a live-updating ASCII progress bar, sound alarms, and pause/skip menus.
+*   **[password_generator_strength.py](password_generator_strength.py)** - Generates high-entropy passwords using Python's cryptographically secure `secrets` library and scores password complexity in bits.
+*   **[SimpleStopWatch.py](SimpleStopWatch.py)** - A clean terminal stopwatch that formats elapsed time into `HH:MM:SS.d` and handles early stopping cleanly.
 
-- [folder_size.py](https://github.com/geekcomputers/Python/blob/master/folder_size.py) - Scans the current directory and all subdirectories and displays the size.
+---
 
-- [logs.py](https://github.com/geekcomputers/Python/blob/master/logs.py) - This script will search for all `*.log` files in the given directory, zip them using the program you specify, and then date stamp them.
+## 📁 File & System Automation Tools
 
-- [move_files_over_x_days.py](https://github.com/geekcomputers/Python/blob/master/move_files_over_x_days.py) - Moves all files over 240 days old from the source directory to the destination directory.
+*   **[batch_file_rename.py](batch_file_rename.py)** - Batch rename file extensions inside a directory. Supports path validations, `--dry-run` previews, case-insensitivity flags, and destination override safety checks.
+*   **[folder_size.py](folder_size.py)** - Calculates file sizes across directories. Modernized to output the single most appropriate unit (e.g. MB, GB) and supports a sorted `--breakdown` of files/subfolders.
+*   **[Organise.py](Organise.py)** - Directory organizer that moves files into categorized subfolders (e.g., Images, Documents) using cross-platform `pathlib` paths.
+*   **[backup_automater_services.py](backup_automater_services.py)** - Automatically backups system configuration services.
+*   **[move_files_over_x_days.py](move_files_over_x_days.py)** - Scans directories and moves files older than a specified duration.
 
-- [nslookup_check.py](https://github.com/geekcomputers/Python/blob/master/nslookup_check.py) - This simple script opens the file `server_list.txt` and then does an nslookup for each one to check the DNS entry.
+---
 
-- [osinfo.py](https://github.com/geekcomputers/Python/blob/master/osinfo.py) - Displays some information about the OS on which you are running this script.
+## 🌐 Network, Web & API Tools
 
-- [ping_servers.py](https://github.com/geekcomputers/Python/blob/master/ping_servers.py) - This script, depending on the arguments supplied, will ping the servers associated with that application group.
+*   **[weather_fetcher.py](weather_fetcher.py)** - Fetches location details and live weather dashboards from the Open-Meteo API using standard HTTP queries. Handles Windows console UTF-8 reconfigurations.
+*   **[xkcd_downloader.py](xkcd_downloader.py)** - Downloads comics via the official XKCD JSON API. Supports specific, latest, or random downloads, and saves metadata in a JSON schema next to the image.
+*   **[password_cracker.py](password_cracker.py)** - Modern, cross-platform hash dictionary cracker using `hashlib`. Automatically detects MD5, SHA-1, and SHA-256 hashes and generates demo data out of the box.
+*   **[portscanner.py](portscanner.py)** - High-speed multi-threaded TCP port scanner. Supports scanning port ranges (e.g., `80-443`) and exits immediately on Ctrl+C.
+*   **[check_internet_con.py](check_internet_con.py)** - Verifies internet connectivity using modern Python 3 socket requests.
+*   **[open_website_selenium.py](open_website_selenium.py)** - Automates browser actions using Selenium with cross-platform driver fail-safes.
+*   **[markdown_to_html.py](markdown_to_html.py)** - Converts Markdown files to responsive, modern styled HTML documents using regular expressions.
 
-- [ping_subnet.py](https://github.com/geekcomputers/Python/blob/master/ping_subnet.py) - After supplying the first 3 octets this file scans the final range for available addresses.
+---
 
-- [powerdown_startup.py](https://github.com/geekcomputers/Python/blob/master/powerdown_startup.py) - This file goes through the server list and pings the machine, if it is up it will load the putty session, if it is not it will notify you.
+## 🧪 Math & Algorithms
 
-- [puttylogs.py](https://github.com/geekcomputers/Python/blob/master/puttylogs.py) -  This file zips up all the logs in the given directory.
+*   **[Decimal_To_Binary.py](Decimal_To_Binary.py)** - Converts floating-point and negative decimal numbers to binary strings.
+*   **[Counting-sort.py](Counting-sort.py)** - Sorts lists using the linear counting sort algorithm.
+*   **[Merge-sort.py](Merge-sort.py)** - Classical divide-and-conquer merge sort implementation.
+*   **[QuadraticCalc.py](QuadraticCalc.py)** - Solves quadratic equations and handles imaginary complex roots cleanly.
 
-- [script_count.py](https://github.com/geekcomputers/Python/blob/master/script_count.py) - This file scans the scripts directory and gives a count of the different types of scripts.
+---
 
-- [script_listing.py](https://github.com/geekcomputers/Python/blob/master/script_listing.py) - This file will list all the files in the given directory, and go through all the subdirectories as well.
+## ⚙️ Setup & Verification
 
-- [testlines.py](https://github.com/geekcomputers/Python/blob/master/testlines.py) - This simple script opens a file and prints out 100 lines of whatever is the set for the line variable.
+You can verify that the scripts compile on your environment by running:
 
-- [tweeter.py](https://github.com/geekcomputers/Python/blob/master/tweeter.py) - This script allows you to tweet text or a picture from the terminal.
+```bash
+python -m py_compile *.py
+```
 
-- [serial_scanner.py](https://github.com/geekcomputers/Python/blob/master/serial_scanner.py) contains a method called ListAvailablePorts which returns a list with the names of the serial ports that are in use in the computer, this method works only on Linux and Windows (can be extended for mac osx). If no port is found, an empty list is returned.
-
-- [get_youtube_view.py](https://github.com/geekcomputers/Python/blob/master/get_youtube_view.py) - This is very simple python script to get more views for your YouTube videos. Useful for repeating songs on YouTube.
-
-- [CountMillionCharacter.py](https://github.com/geekcomputers/Python/blob/master/CountMillionCharacter.py) And [CountMillionCharacter2.0](https://github.com/geekcomputers/Python/blob/master/CountMillionCharacters-2.0.py).py - Counts character scripts, or how much characters are present on any text based file.
-
-- [xkcd_downloader.py](https://github.com/geekcomputers/Python/blob/master/xkcd_downloader.py) - Downloads the latest XKCD comic and places them in a new folder called "comics".
-
-- [timymodule.py](https://github.com/geekcomputers/Python/blob/master/timymodule.py) - A great alternative to Pythons 'timeit' module and easier to use.
-
-- [calculator.py](https://github.com/geekcomputers/Python/blob/master/calculator.py) - Uses Python's eval() function to implement a calculator.
-
-- [Google_News.py](https://github.com/geekcomputers/Python/blob/master/Google_News.py) - Uses BeautifulSoup to provide Latest News Headline along with news link.
-
-- [cricket_live_score](https://github.com/geekcomputers/Python/blob/master/Cricket_score.py) - Uses BeautifulSoup to provide live cricket score.
-
-- [youtube.py](https://github.com/geekcomputers/Python/blob/master/youtube.py) - Takes a song name as input and fetches the YouTube url of the best matching song and plays it.  
-
-- [site_health.py](https://github.com/geekcomputers/Python/blob/master/site_health.py) - This script is very useful for when you just to do a health check on a remote server.
-
-- [SimpleStopWatch.py](https://github.com/geekcomputers/Python/blob/master/SimpleStopWatch.py) - Simple Stop Watch implementation using Python's time module.
+### Running GUI Applications
+Ensure you have the required graphical dependencies installed if you run tools like `AutoClicker.py`:
+```bash
+pip install pyautogui keyboard
+```

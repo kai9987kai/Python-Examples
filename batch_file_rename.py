@@ -1,70 +1,102 @@
 # batch_file_rename.py
 # Created: 6th August 2012
+# Modified: June 2026
 
 """
 This will batch rename a group of files in a given directory,
-once you pass the current and new extensions
+once you pass the current and new extensions.
 """
 
-# just checking
 __author__ = 'Craig Richards'
-__version__ = '1.0'
+__version__ = '2.0'
 
 import os
 import argparse
+import sys
 
 
-def batch_rename(work_dir, old_ext, new_ext):
+def batch_rename(work_dir, old_ext, new_ext, dry_run=False, case_insensitive=False):
     """
     This will batch rename a group of files in a given directory,
-    once you pass the current and new extensions
+    once you pass the current and new extensions.
     """
-    # files = os.listdir(work_dir)
-    for filename in os.listdir(work_dir):
-        # Get the file extension
+    if not os.path.isdir(work_dir):
+        print(f"[-] Error: Directory '{work_dir}' does not exist or is not a directory.")
+        sys.exit(1)
+
+    # Ensure extensions start with '.'
+    if not old_ext.startswith('.'):
+        old_ext = '.' + old_ext
+    if not new_ext.startswith('.'):
+        new_ext = '.' + new_ext
+
+    print(f"[*] Scanning '{work_dir}' for files ending in '{old_ext}'...")
+    
+    rename_count = 0
+    skipped_count = 0
+    
+    try:
+        filenames = os.listdir(work_dir)
+    except OSError as e:
+        print(f"[-] Error reading directory contents: {e}")
+        sys.exit(1)
+
+    for filename in filenames:
+        filepath = os.path.join(work_dir, filename)
+        
+        # Process files only
+        if not os.path.isfile(filepath):
+            continue
+            
         split_file = os.path.splitext(filename)
         file_ext = split_file[1]
-        # Start of the logic to check the file extensions, if old_ext = file_ext
-        if old_ext == file_ext:
-            # Returns changed name of the file with new extention
-            newfile = split_file[0] + new_ext
+        
+        # Check matching extension
+        is_match = (file_ext.lower() == old_ext.lower()) if case_insensitive else (file_ext == old_ext)
+        
+        if is_match:
+            new_filename = split_file[0] + new_ext
+            new_filepath = os.path.join(work_dir, new_filename)
+            
+            # Check if destination file already exists (to avoid accidental overrides)
+            if os.path.exists(new_filepath) and new_filename != filename:
+                print(f"[!] Warning: Cannot rename '{filename}' to '{new_filename}' (target file already exists). Skipping.")
+                skipped_count += 1
+                continue
+                
+            if dry_run:
+                print(f"[DRY RUN] Would rename: '{filename}' -> '{new_filename}'")
+            else:
+                try:
+                    os.rename(filepath, new_filepath)
+                    print(f"[+] Renamed: '{filename}' -> '{new_filename}'")
+                except OSError as e:
+                    print(f"[-] Error renaming '{filename}': {e}")
+                    skipped_count += 1
+                    continue
+            
+            rename_count += 1
 
-            # Write the files
-            os.rename(
-                os.path.join(work_dir, filename),
-                os.path.join(work_dir, newfile)
-            )
+    if dry_run:
+        print(f"[*] Dry run finished. Would rename {rename_count} files (skipped {skipped_count}).")
+    else:
+        print(f"[*] Renaming finished. Successfully renamed {rename_count} files (skipped {skipped_count}).")
 
 
 def get_parser():
-    parser = argparse.ArgumentParser(description='change extension of files in a working directory')
-    parser.add_argument('work_dir', metavar='WORK_DIR', type=str, nargs=1,
-                        help='the directory where to change extension')
-    parser.add_argument('old_ext', metavar='OLD_EXT', type=str, nargs=1, help='old extension')
-    parser.add_argument('new_ext', metavar='NEW_EXT', type=str, nargs=1, help='new extension')
+    parser = argparse.ArgumentParser(description='Change file extensions in a working directory.')
+    parser.add_argument('work_dir', type=str, help='The directory where extension changes occur.')
+    parser.add_argument('old_ext', type=str, help='Old extension to look for (e.g. .txt or txt).')
+    parser.add_argument('new_ext', type=str, help='New extension to apply (e.g. .md or md).')
+    parser.add_argument('-d', '--dry-run', action='store_true', help='Preview changes without modifying files.')
+    parser.add_argument('-i', '--case-insensitive', action='store_true', help='Enable case-insensitive extension matching.')
     return parser
 
 
 def main():
-    """
-    This will be called if the script is directly invoked.
-    """
-    # adding command line argument
     parser = get_parser()
-    args = vars(parser.parse_args())
-
-    # Set the variable work_dir with the first argument passed
-    work_dir = args['work_dir'][0]
-    # Set the variable old_ext with the second argument passed
-    old_ext = args['old_ext'][0]
-    if old_ext[0] != '.':
-        old_ext = '.' + old_ext
-    # Set the variable new_ext with the third argument passed
-    new_ext = args['new_ext'][0]
-    if new_ext[0] != '.':
-        new_ext = '.' + new_ext
-
-    batch_rename(work_dir, old_ext, new_ext)
+    args = parser.parse_args()
+    batch_rename(args.work_dir, args.old_ext, args.new_ext, dry_run=args.dry_run, case_insensitive=args.case_insensitive)
 
 
 if __name__ == '__main__':

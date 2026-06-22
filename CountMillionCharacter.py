@@ -291,11 +291,75 @@ ARCHBISHOP OF YORK
 Before, and greet his grace: my lord, we come.
 Exeunt'''
 
-wordlist = wordstring.split()
+import argparse
+import sys
+import collections
+import string
 
-wordfreq = [wordlist.count(w) for w in wordlist]
+def process_text(text):
+    # Normalize words by lowercasing and stripping punctuation
+    cleaned_words = []
+    translator = str.maketrans('', '', string.punctuation)
+    for word in text.split():
+        clean = word.translate(translator).lower()
+        if clean:
+            cleaned_words.append(clean)
+            
+    # O(N) word count
+    word_counts = collections.Counter(cleaned_words)
+    return cleaned_words, word_counts
 
-print("String\n {} \n".format(wordstring))
-print("List\n {} \n".format(str(wordlist)))
-print("Frequencies\n {} \n".format(str(wordfreq)))
-print("Pairs\n {}".format(str(dict(zip(wordlist, wordfreq)))))
+
+def main():
+    parser = argparse.ArgumentParser(description="Efficient word frequency counter (O(N) time complexity).")
+    parser.add_argument('file', nargs='?', default=None, help='Path to text file to count. If omitted, uses standard input or a hardcoded Shakespeare demo.')
+    args = parser.parse_args()
+    
+    source = "Shakespeare Demo"
+    if args.file:
+        try:
+            with open(args.file, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            source = f"File: {args.file}"
+        except OSError as e:
+            print(f"[-] Error reading file: {e}")
+            sys.exit(1)
+    else:
+        # Check if stdin has content (is not a TTY)
+        if not sys.stdin.isatty():
+            content = sys.stdin.read()
+            source = "Standard Input"
+        else:
+            # Fallback to the hardcoded wordstring
+            content = wordstring
+            
+    print(f"[*] Processing word frequencies from: {source}...")
+    wordlist, word_counts = process_text(content)
+    
+    total_words = len(wordlist)
+    unique_words = len(word_counts)
+    
+    print(f"\n[*] Total words: {total_words}")
+    print(f"[*] Unique words: {unique_words}")
+    
+    # Print top 15 most frequent words in a neat table
+    top_15 = word_counts.most_common(15)
+    print("\n+--------------------+-------+")
+    print("| Word               | Count |")
+    print("+--------------------+-------+")
+    for word, count in top_15:
+        print(f"| {word:<18} | {count:<5} |")
+    print("+--------------------+-------+")
+    
+    # If the text is small (like our demo), print raw lists for backward compatibility
+    if total_words < 1000:
+        print(f"\n[Demo Mode] Displaying raw lists (truncated for large files):")
+        # Legacy list outputs constructed in O(N)
+        wordfreq = [word_counts[w] for w in wordlist]
+        print("\nList:\n", wordlist[:100], "... (truncated)" if len(wordlist) > 100 else "")
+        print("\nFrequencies:\n", wordfreq[:100], "... (truncated)" if len(wordfreq) > 100 else "")
+        print("\nPairs (Unique):\n", dict(top_15))
+
+
+if __name__ == '__main__':
+    main()
