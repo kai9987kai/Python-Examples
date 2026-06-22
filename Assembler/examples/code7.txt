@@ -1,0 +1,9 @@
+; Read one number from the console, double it, and print the result.
+mov eax, 3
+int 0x80
+add ecx, ecx
+mov eax, 4
+int 0x80
+mov eax, 1
+mov ebx, 0
+int 0x80
