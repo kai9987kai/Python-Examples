@@ -23,8 +23,13 @@ convert degrees to radians : rad(deg)
 """
 
 import sys
+import math
 
-from fileinfo import raw_input
+# Handle Python 2/3 compatibility for input
+try:
+    input = raw_input
+except NameError:
+    pass
 
 
 def calc(term):
@@ -96,19 +101,11 @@ def main():
     print("\nScientific Calculator\n\nFor Example: sin(rad(90)) + 50% * (sqrt(16)) + round(1.42^2)" +
           "- 12mod3\n\nEnter quit to exit")
 
-    if sys.version_info.major >= 3:
-        while True:
-            k = input("\nWhat is ")
-            if k == 'quit':
-                break
-            result(k)
-
-    else:
-        while True:
-            k = raw_input("\nWhat is ")
-            if k == 'quit':
-                break
-            result(k)
+    while True:
+        k = input("\nWhat is ")
+        if k == 'quit':
+            break
+        result(k)
 
 
 if __name__ == '__main__':
