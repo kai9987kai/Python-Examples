@@ -1,26 +1,28 @@
-"""Author Anurag Kumar (mailto:anuragkumarak95@gmail.com)
-
-Given an array of integers, return indices of the two numbers
-such that they add up to a specific target.
-You may assume that each input would have exactly one solution,
-and you may not use the same element twice.
-
-Example:
-Given nums = [2, 7, 11, 15], target = 9,
-Because nums[0] + nums[1] = 2 + 7 = 9,
-return [0, 1].
-
-"""
+from collections.abc import Sequence
 
 
-def twoSum(nums, target):
-    chk_map = {}
-    for index, val in enumerate(nums):
-        compl = target - val
-        if compl in chk_map:
-            indices = [chk_map[compl], index]
-            print(indices)
-            return [indices]
-        else:
-            chk_map[val] = index
-    return False
+def two_sum(nums: Sequence[int], target: int) -> list[int]:
+    """
+    Return the indices of two distinct values in nums that add up to target.
+
+    Raises:
+        ValueError: If no valid pair exists.
+    """
+    seen: dict[int, int] = {}
+
+    for index, value in enumerate(nums):
+        complement = target - value
+
+        if complement in seen:
+            return [seen[complement], index]
+
+        seen[value] = index
+
+    raise ValueError("No two numbers add up to the target.")
+
+
+# Example
+nums = [2, 7, 11, 15]
+target = 9
+
+print(two_sum(nums, target))  # [0, 1]
