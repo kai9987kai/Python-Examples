@@ -1,130 +1,484 @@
 #!/usr/bin/env python3
 """
-Script Name     : portscanner.py
-Author          : Craig Richards / Improved
-Description     : Threaded TCP port scanner supporting individual ports and port ranges.
+portscanner.py — bounded-concurrency TCP connect scanner.
+
+Use only on systems you own or are explicitly authorised to assess.
 """
 
+from __future__ import annotations
+
 import argparse
+import csv
+import errno
+import json
+import socket
 import sys
-from socket import socket, AF_INET, SOCK_STREAM, gethostbyname, gethostbyaddr, setdefaulttimeout
-from threading import Thread, Semaphore
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass
+from typing import Sequence
 
-# Semaphore to prevent print overlap from multiple threads
-screen_lock = Semaphore(value=1)
-
-
-def conn_scan(tgt_host, tgt_port, verbose=False):
-    """Attempts to connect to a target host and port to see if it is open."""
-    try:
-        conn_skt = socket(AF_INET, SOCK_STREAM)
-        conn_skt.connect((tgt_host, tgt_port))
-        
-        # In Python 3, socket.send() requires a bytes-like object, not a str.
-        # This was a major bug in the original script.
-        conn_skt.send(b'\r\n')
-        
-        results = conn_skt.recv(100)
-        
-        with screen_lock:
-            print(f'[+] {tgt_port}/tcp open')
-            if results:
-                # Print banner response if received
-                try:
-                    banner = results.decode('utf-8', errors='ignore').strip()
-                    if banner:
-                        print(f'   [Banner] {banner}')
-                except Exception:
-                    pass
-    except Exception:
-        if verbose:
-            with screen_lock:
-                print(f'[-] {tgt_port}/tcp closed')
-    finally:
-        conn_skt.close()
+DEFAULT_MAX_PORTS = 4096
+MAX_WORKERS = 512
 
 
-def port_scan(tgt_host, tgt_ports, verbose=False):
-    """Resolves target host and spawns threads for each port scanning attempt."""
-    try:
-        tgt_ip = gethostbyname(tgt_host)
-    except Exception:
-        print(f"[-] Cannot resolve '{tgt_host}': Unknown host")
-        return
-
-    try:
-        tgt_name = gethostbyaddr(tgt_ip)
-        print(f'\n[+] Scan Results for: {tgt_name[0]} ({tgt_ip})')
-    except Exception:
-        print(f'\n[+] Scan Results for: {tgt_ip}')
-
-    setdefaulttimeout(1.5)
-    
-    threads = []
-    try:
-        for tgt_port in tgt_ports:
-            # Spawn daemon threads so they terminate immediately if the user exits via Ctrl+C
-            t = Thread(target=conn_scan, args=(tgt_host, tgt_port, verbose), daemon=True)
-            threads.append(t)
-            t.start()
-
-        # Join threads while keeping main thread active for KeyboardInterrupt signals
-        for t in threads:
-            while t.is_alive():
-                t.join(timeout=0.1)
-                
-    except KeyboardInterrupt:
-        print("\n[-] Scan cancelled by user. Terminating threads...")
-        sys.exit(0)
+@dataclass(frozen=True)
+class TargetAddress:
+    family: int
+    protocol: int
+    sockaddr: tuple
 
 
-def parse_ports(ports_str):
-    """Parses ports argument supporting individual ports and ranges (e.g. 80,443,8000-8010)."""
-    ports = []
-    for part in ports_str.split(','):
-        part = part.strip()
-        if not part:
+@dataclass
+class ScanResult:
+    port: int
+    status: str
+    service: str
+    banner: str | None = None
+    detail: str | None = None
+
+
+def parse_ports(value: str) -> list[int]:
+    """Parse: 22,80,443,8000-8010"""
+    ports: set[int] = set()
+
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
             continue
-        if '-' in part:
-            try:
-                start, end = part.split('-')
-                start_port = int(start)
-                end_port = int(end)
-                if start_port < 1 or end_port > 65535 or start_port > end_port:
+
+        try:
+            if "-" in item:
+                if item.count("-") != 1:
                     raise ValueError
-                ports.extend(range(start_port, end_port + 1))
-            except ValueError:
-                raise argparse.ArgumentTypeError(f"Invalid port range: '{part}'. Ports must be between 1 and 65535.")
-        else:
-            try:
-                port = int(part)
-                if port < 1 or port > 65535:
+
+                start_text, end_text = (part.strip() for part in item.split("-", 1))
+                start, end = int(start_text), int(end_text)
+
+                if not (1 <= start <= end <= 65535):
                     raise ValueError
-                ports.append(port)
-            except ValueError:
-                raise argparse.ArgumentTypeError(f"Invalid port: '{part}'. Port must be an integer between 1 and 65535.")
-                
+
+                ports.update(range(start, end + 1))
+            else:
+                port = int(item)
+
+                if not 1 <= port <= 65535:
+                    raise ValueError
+
+                ports.add(port)
+
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                f"Invalid port or range: {item!r}. Use ports from 1 to 65535."
+            ) from exc
+
     if not ports:
         raise argparse.ArgumentTypeError("No valid ports specified.")
-    return sorted(list(set(ports)))
+
+    return sorted(ports)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Threaded TCP Port Scanner.")
-    parser.add_argument('host', type=str, help='Target host name or IP address.')
-    parser.add_argument('ports', type=str, help='Comma-separated ports or ranges (e.g. 80,443,8000-8010).')
-    parser.add_argument('-v', '--verbose', action='store_true', help='Show closed ports as well (default: only show open ports).')
-    
-    args = parser.parse_args()
+def positive_float(value: str) -> float:
+    try:
+        number = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Must be a number.") from exc
+
+    if number <= 0:
+        raise argparse.ArgumentTypeError("Must be greater than zero.")
+
+    return number
+
+
+def worker_count(value: str) -> int:
+    try:
+        workers = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Workers must be an integer.") from exc
+
+    if not 1 <= workers <= MAX_WORKERS:
+        raise argparse.ArgumentTypeError(
+            f"Workers must be between 1 and {MAX_WORKERS}."
+        )
+
+    return workers
+
+
+def resolve_target(host: str, family_mode: str) -> TargetAddress:
+    family = {
+        "auto": socket.AF_UNSPEC,
+        "ipv4": socket.AF_INET,
+        "ipv6": socket.AF_INET6,
+    }[family_mode]
 
     try:
-        ports_list = parse_ports(args.ports)
-    except argparse.ArgumentTypeError as e:
-        print(f"[-] Error: {e}")
-        sys.exit(1)
+        candidates = socket.getaddrinfo(
+            host,
+            None,
+            family,
+            socket.SOCK_STREAM,
+        )
+    except socket.gaierror as exc:
+        raise ValueError(f"Cannot resolve {host!r}: {exc}") from exc
 
-    port_scan(args.host, ports_list, args.verbose)
+    for address_family, _, protocol, _, sockaddr in candidates:
+        if address_family in (socket.AF_INET, socket.AF_INET6):
+            return TargetAddress(address_family, protocol, sockaddr)
+
+    raise ValueError(f"No usable IPv4/IPv6 address found for {host!r}.")
 
 
-if __name__ == '__main__':
-    main()
+def sockaddr_for_port(sockaddr: tuple, port: int) -> tuple:
+    """Preserves IPv6 flow info and scope ID while replacing port."""
+    return (sockaddr[0], port, *sockaddr[2:])
+
+
+def service_for_port(port: int) -> str:
+    try:
+        return socket.getservbyport(port, "tcp")
+    except OSError:
+        return ""
+
+
+def sanitise_banner(data: bytes) -> str | None:
+    """Keep received banner data safe for terminal, JSON and CSV output."""
+    if not data:
+        return None
+
+    text = data.decode("utf-8", errors="replace")
+    text = "".join(char if char.isprintable() else " " for char in text)
+    text = " ".join(text.split())
+
+    return text[:512] or None
+
+
+def scan_one(
+    target: TargetAddress,
+    port: int,
+    timeout: float,
+    read_banner: bool,
+    banner_timeout: float,
+    banner_bytes: int,
+) -> ScanResult:
+    service = service_for_port(port)
+
+    try:
+        with socket.socket(
+            target.family,
+            socket.SOCK_STREAM,
+            target.protocol,
+        ) as sock:
+            sock.settimeout(timeout)
+            sock.connect(sockaddr_for_port(target.sockaddr, port))
+
+            banner = None
+
+            if read_banner:
+                # Passive read only: no bytes are sent to the target.
+                sock.settimeout(min(timeout, banner_timeout))
+
+                try:
+                    banner = sanitise_banner(sock.recv(banner_bytes))
+                except socket.timeout:
+                    pass
+                except OSError:
+                    pass
+
+            return ScanResult(
+                port=port,
+                status="open",
+                service=service,
+                banner=banner,
+            )
+
+    except ConnectionRefusedError:
+        return ScanResult(port, "closed", service)
+
+    except socket.timeout:
+        return ScanResult(
+            port,
+            "timeout",
+            service,
+            detail="Connection timed out",
+        )
+
+    except OSError as exc:
+        if exc.errno == errno.ECONNREFUSED:
+            return ScanResult(port, "closed", service)
+
+        if exc.errno in {
+            errno.ETIMEDOUT,
+            errno.EHOSTUNREACH,
+            errno.ENETUNREACH,
+        }:
+            return ScanResult(
+                port,
+                "timeout",
+                service,
+                detail=exc.strerror or str(exc),
+            )
+
+        return ScanResult(
+            port,
+            "error",
+            service,
+            detail=exc.strerror or str(exc),
+        )
+
+    except Exception as exc:
+        return ScanResult(
+            port,
+            "error",
+            service,
+            detail=str(exc),
+        )
+
+
+def run_scan(
+    target: TargetAddress,
+    ports: Sequence[int],
+    timeout: float,
+    workers: int,
+    read_banner: bool,
+    banner_timeout: float,
+    banner_bytes: int,
+) -> list[ScanResult]:
+    executor = ThreadPoolExecutor(
+        max_workers=min(workers, len(ports))
+    )
+
+    futures = [
+        executor.submit(
+            scan_one,
+            target,
+            port,
+            timeout,
+            read_banner,
+            banner_timeout,
+            banner_bytes,
+        )
+        for port in ports
+    ]
+
+    results: list[ScanResult] = []
+    interrupted = False
+
+    try:
+        for future in as_completed(futures):
+            results.append(future.result())
+
+    except KeyboardInterrupt:
+        interrupted = True
+        print("\n[-] Cancelling queued scan tasks…", file=sys.stderr)
+
+    finally:
+        executor.shutdown(
+            wait=True,
+            cancel_futures=interrupted,
+        )
+
+    if interrupted:
+        raise KeyboardInterrupt
+
+    return sorted(results, key=lambda result: result.port)
+
+
+def print_text(
+    host: str,
+    address: str,
+    results: list[ScanResult],
+    elapsed: float,
+    verbose: bool,
+) -> None:
+    visible = results if verbose else [
+        result for result in results if result.status == "open"
+    ]
+
+    print(f"Target: {host} ({address})")
+    print(f"{'PORT':<9} {'STATE':<9} {'SERVICE':<16} DETAILS")
+    print("-" * 78)
+
+    for result in visible:
+        details = result.banner or result.detail or ""
+
+        print(
+            f"{result.port}/tcp".ljust(9),
+            f"{result.status:<9}",
+            f"{(result.service or '-'): <16}",
+            details,
+        )
+
+    counts: dict[str, int] = {}
+
+    for result in results:
+        counts[result.status] = counts.get(result.status, 0) + 1
+
+    count_text = ", ".join(
+        f"{name}: {count}"
+        for name, count in sorted(counts.items())
+    )
+
+    print("-" * 78)
+    print(f"Scanned {len(results)} ports in {elapsed:.2f}s — {count_text}")
+
+
+def print_json(
+    host: str,
+    address: str,
+    results: list[ScanResult],
+    elapsed: float,
+) -> None:
+    payload = {
+        "target": {
+            "host": host,
+            "address": address,
+        },
+        "elapsed_seconds": round(elapsed, 4),
+        "summary": {
+            status: sum(result.status == status for result in results)
+            for status in sorted({result.status for result in results})
+        },
+        "results": [asdict(result) for result in results],
+    }
+
+    print(json.dumps(payload, indent=2))
+
+
+def print_csv(results: list[ScanResult]) -> None:
+    writer = csv.DictWriter(
+        sys.stdout,
+        fieldnames=["port", "status", "service", "banner", "detail"],
+    )
+
+    writer.writeheader()
+    writer.writerows(asdict(result) for result in results)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Bounded-concurrency TCP scanner for authorised assessments."
+    )
+
+    parser.add_argument(
+        "host",
+        help="Single hostname or IP address to scan.",
+    )
+
+    parser.add_argument(
+        "ports",
+        type=parse_ports,
+        help="Ports/ranges, e.g. 22,80,443,8000-8010.",
+    )
+
+    parser.add_argument(
+        "-w",
+        "--workers",
+        type=worker_count,
+        default=100,
+        help="Maximum concurrent connections, 1-512. Default: 100.",
+    )
+
+    parser.add_argument(
+        "-t",
+        "--timeout",
+        type=positive_float,
+        default=1.5,
+        help="Per-port connection timeout in seconds. Default: 1.5.",
+    )
+
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Show closed, timeout and error states.",
+    )
+
+    parser.add_argument(
+        "--banner",
+        action="store_true",
+        help="Passively receive banner bytes after connection; sends no data.",
+    )
+
+    parser.add_argument(
+        "--banner-timeout",
+        type=positive_float,
+        default=0.35,
+        help="Maximum passive banner wait. Default: 0.35 seconds.",
+    )
+
+    parser.add_argument(
+        "--family",
+        choices=("auto", "ipv4", "ipv6"),
+        default="auto",
+        help="Address family to use. Default: auto.",
+    )
+
+    parser.add_argument(
+        "--format",
+        choices=("text", "json", "csv"),
+        default="text",
+        help="Output format. Default: text.",
+    )
+
+    parser.add_argument(
+        "--allow-large-scan",
+        action="store_true",
+        help=f"Permit more than {DEFAULT_MAX_PORTS} requested ports.",
+    )
+
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if len(args.ports) > DEFAULT_MAX_PORTS and not args.allow_large_scan:
+        parser.error(
+            f"{len(args.ports)} ports requested. "
+            "Use --allow-large-scan only for an authorised broad scan."
+        )
+
+    try:
+        target = resolve_target(args.host, args.family)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    address = target.sockaddr[0]
+    started = time.perf_counter()
+
+    try:
+        results = run_scan(
+            target=target,
+            ports=args.ports,
+            timeout=args.timeout,
+            workers=args.workers,
+            read_banner=args.banner,
+            banner_timeout=args.banner_timeout,
+            banner_bytes=512,
+        )
+    except KeyboardInterrupt:
+        return 130
+
+    elapsed = time.perf_counter() - started
+
+    if args.format == "json":
+        print_json(args.host, address, results, elapsed)
+
+    elif args.format == "csv":
+        print_csv(results)
+
+    else:
+        print_text(
+            args.host,
+            address,
+            results,
+            elapsed,
+            args.verbose,
+        )
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
