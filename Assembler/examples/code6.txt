@@ -1,0 +1,16 @@
+; Save two register values on the stack, change them, then restore them.
+mov eax, 7
+mov ebx, 3
+push eax
+push ebx
+add eax, 100
+add ebx, 100
+pop ebx
+pop eax
+add eax, ebx
+mov ecx, eax
+mov eax, 4
+int 0x80
+mov eax, 1
+mov ebx, 0
+int 0x80

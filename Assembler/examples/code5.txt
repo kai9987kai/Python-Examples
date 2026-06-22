@@ -1,0 +1,16 @@
+; Compare two registers and print the matching value.
+mov eax, 12
+mov ebx, 12
+mov ecx, 0
+cmp eax, ebx
+je l1
+mov ecx, -1
+jmp l2
+l1:
+mov ecx, 1
+l2:
+mov eax, 4
+int 0x80
+mov eax, 1
+mov ebx, 0
+int 0x80
