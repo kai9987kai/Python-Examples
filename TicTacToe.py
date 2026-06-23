@@ -1,196 +1,328 @@
-# Tic Tac Toe
+"""
+Advanced Tic-Tac-Toe
+Python 3 terminal edition
+"""
 
 import random
-import sys
 
-def get_input():
-	if sys.version_info >= (3, 0):
-		return input()
-	else:
-		return raw_input()
+EMPTY = " "
+PLAYER = "player"
+COMPUTER = "computer"
 
-def drawBoard(board):
-    # This function prints out the board that it was passed.
 
-    # "board" is a list of 10 strings representing the board (ignore index 0)
-    print(' ' + board[7] + ' | ' + board[8] + ' | ' + board[9])
-    print('-----------')
-    print(' ' + board[4] + ' | ' + board[5] + ' | ' + board[6])
-    print('-----------')
-    print(' ' + board[1] + ' | ' + board[2] + ' | ' + board[3])
+def draw_board(board):
+    """Display the board. Empty spaces show their move number."""
+    def cell(index):
+        return board[index] if board[index] != EMPTY else str(index + 1)
 
-def inputPlayerLetter():
-    # Lets the player type which letter they want to be.
-    # Returns a list with the player's letter as the first item, and the computer's letter as the second.
-    letter = ''
-    while not (letter == 'X' or letter == 'O'):
-        print('Do you want to be X or O?')
-        letter = get_input().upper()
+    print("\n")
+    print(f" {cell(0)} | {cell(1)} | {cell(2)} ")
+    print("---+---+---")
+    print(f" {cell(3)} | {cell(4)} | {cell(5)} ")
+    print("---+---+---")
+    print(f" {cell(6)} | {cell(7)} | {cell(8)} ")
+    print()
 
-    # the first element in the tuple is the player's letter, the second is the computer's letter.
-    if letter == 'X':
-        return ['X', 'O']
-    else:
-        return ['O', 'X']
 
-def whoGoesFirst():
-    # Randomly choose the player who goes first.
-    if random.randint(0, 1) == 0:
-        return 'computer'
-    else:
-        return 'player'
+def get_choice(prompt, choices):
+    """Keep asking until the player enters a valid choice."""
+    while True:
+        answer = input(prompt).strip().lower()
+        if answer in choices:
+            return answer
+        print(f"Please enter one of: {', '.join(choices)}")
 
-def playAgain():
-    # This function returns True if the player wants to play again, otherwise it returns False.
-    print('Do you want to play again? (yes or no)')
-    return get_input().lower().startswith('y')
 
-def makeMove(board, letter, move):
-    if isSpaceFree(board,move):
-        board[move] = letter
-    else:
-        raise Exception("makeMove: the field is not empty!")
+def choose_letter():
+    """Return player and computer letters."""
+    choice = get_choice("Choose X or O: ", ["x", "o"])
 
-def isWinner(bo, le):
-    # Given a board and a player's letter, this function returns True if that player has won.
-    # We use bo instead of board and le instead of letter so we don't have to type as much.
-    return ((bo[7] == le and bo[8] == le and bo[9] == le) or # across the top
-    (bo[4] == le and bo[5] == le and bo[6] == le) or # across the middle
-    (bo[1] == le and bo[2] == le and bo[3] == le) or # across the bottom
-    (bo[7] == le and bo[4] == le and bo[1] == le) or # down the left side
-    (bo[8] == le and bo[5] == le and bo[2] == le) or # down the middle
-    (bo[9] == le and bo[6] == le and bo[3] == le) or # down the right side
-    (bo[7] == le and bo[5] == le and bo[3] == le) or # diagonal
-    (bo[9] == le and bo[5] == le and bo[1] == le)) # diagonal
+    if choice == "x":
+        return "X", "O"
+    return "O", "X"
 
-def getBoardCopy(board):
-    # Make a duplicate of the board list and return it the duplicate.
-    dupeBoard = []
 
-    for i in board:
-        dupeBoard.append(i)
+def choose_difficulty():
+    """Choose AI difficulty."""
+    print("\nDifficulty levels:")
+    print("1. Easy   - random moves")
+    print("2. Medium - blocks and takes winning moves")
+    print("3. Hard   - unbeatable minimax AI")
 
-    return dupeBoard
+    choice = get_choice("Select difficulty (1-3): ", ["1", "2", "3"])
+    return {"1": "easy", "2": "medium", "3": "hard"}[choice]
 
-def isSpaceFree(board, move):
-    # Return true if the passed move is free on the passed board.
-    return board[move].isdigit()
 
-def getPlayerMove(board):
-    # Let the player type in his move.
-    move = ' '
-    while move not in '1 2 3 4 5 6 7 8 9'.split() or not isSpaceFree(board, int(move)):
-        print('What is your next move? (1-9)')
-        move = get_input()
-    return int(move)
+def available_moves(board):
+    """Return all available board positions."""
+    return [index for index, value in enumerate(board) if value == EMPTY]
 
-def chooseRandomMoveFromList(board, movesList):
-    # Returns a valid move from the passed list on the passed board.
-    # Returns None if there is no valid move.
-    possibleMoves = []
-    for i in movesList:
-        if isSpaceFree(board, i):
-            possibleMoves.append(i)
 
-    if len(possibleMoves) > 0:
-        return random.choice(possibleMoves)
-    else:
-        return None
+def make_move(board, index, letter):
+    """Place a letter on the board if possible."""
+    if index not in range(9):
+        return False
 
-def getComputerMove(board, computerLetter):
-    # Given a board and the computer's letter, determine where to move and return that move.
-    if computerLetter == 'X':
-        playerLetter = 'O'
-    else:
-        playerLetter = 'X'
+    if board[index] != EMPTY:
+        return False
 
-    # Here is our algorithm for our Tic Tac Toe AI:
-    # First, check if we can win in the next move
-    for i in range(1, 10):
-        copy = getBoardCopy(board)
-        if isSpaceFree(copy, i):
-            makeMove(copy, computerLetter, i)
-            if isWinner(copy, computerLetter):
-                return i
-
-    # Check if the player could win on his next move, and block them.
-    for i in range(1, 10):
-        copy = getBoardCopy(board)
-        if isSpaceFree(copy, i):
-            makeMove(copy, playerLetter, i)
-            if isWinner(copy, playerLetter):
-                return i
-
-    # Try to take one of the corners, if they are free.
-    move = chooseRandomMoveFromList(board, [1, 3, 7, 9])
-    if move != None:
-        return move
-
-    # Try to take the center, if it is free.
-    if isSpaceFree(board, 5):
-        return 5
-
-    # Move on one of the sides.
-    return chooseRandomMoveFromList(board, [2, 4, 6, 8])
-
-def isBoardFull(board):
-    # Return True if every space on the board has been taken. Otherwise return False.
-    for i in range(1, 10):
-        if isSpaceFree(board, i):
-            return False
+    board[index] = letter
     return True
 
-def main():
-    print('Welcome to Tic Tac Toe!')
-    random.seed()
+
+def check_winner(board, letter):
+    """Return True when the supplied letter has won."""
+    winning_lines = [
+        (0, 1, 2), (3, 4, 5), (6, 7, 8),
+        (0, 3, 6), (1, 4, 7), (2, 5, 8),
+        (0, 4, 8), (2, 4, 6)
+    ]
+
+    return any(
+        board[a] == letter and board[b] == letter and board[c] == letter
+        for a, b, c in winning_lines
+    )
+
+
+def is_board_full(board):
+    return EMPTY not in board
+
+
+def get_player_move(board):
+    """Ask the player for a valid move. Returns None when they quit."""
     while True:
-        # Reset the board
-        theBoard = [' '] * 10
-        for i in range(9,0,-1):
-            theBoard[i] = str(i)
-        playerLetter, computerLetter = inputPlayerLetter()
-        turn = whoGoesFirst()
-        print('The ' + turn + ' will go first.')
-        gameIsPlaying = True
-    
-        while gameIsPlaying:
-            if turn == 'player':
-                # Player's turn.
-                drawBoard(theBoard)
-                move = getPlayerMove(theBoard)
-                makeMove(theBoard, playerLetter, move)
-    
-                if isWinner(theBoard, playerLetter):
-                    drawBoard(theBoard)
-                    print('Hooray! You have won the game!')
-                    gameIsPlaying = False
-                else:
-                    if isBoardFull(theBoard):
-                        drawBoard(theBoard)
-                        print('The game is a tie!')
-                        break
-                    else:
-                        turn = 'computer'
-    
-            else:
-                # Computer's turn.
-                move = getComputerMove(theBoard, computerLetter)
-                makeMove(theBoard, computerLetter, move)
-    
-                if isWinner(theBoard, computerLetter):
-                    drawBoard(theBoard)
-                    print('The computer has beaten you! You lose.')
-                    gameIsPlaying = False
-                else:
-                    if isBoardFull(theBoard):
-                        drawBoard(theBoard)
-                        print('The game is a tie!')
-                        break
-                    else:
-                        turn = 'player'
-    
-        if not playAgain():
+        choice = input("Choose a square (1-9), or Q to quit: ").strip().lower()
+
+        if choice == "q":
+            return None
+
+        if not choice.isdigit():
+            print("Enter a number from 1 to 9.")
+            continue
+
+        move = int(choice) - 1
+
+        if move not in range(9):
+            print("That square does not exist.")
+        elif board[move] != EMPTY:
+            print("That square is already occupied.")
+        else:
+            return move
+
+
+def find_winning_move(board, letter):
+    """Return a winning position for letter, or None."""
+    for move in available_moves(board):
+        test_board = board[:]
+        test_board[move] = letter
+
+        if check_winner(test_board, letter):
+            return move
+
+    return None
+
+
+def get_medium_move(board, computer_letter, player_letter):
+    """Tactical AI: win, block, prioritise centre/corners."""
+    winning_move = find_winning_move(board, computer_letter)
+    if winning_move is not None:
+        return winning_move
+
+    blocking_move = find_winning_move(board, player_letter)
+    if blocking_move is not None:
+        return blocking_move
+
+    if board[4] == EMPTY:
+        return 4
+
+    corners = [0, 2, 6, 8]
+    open_corners = [move for move in corners if board[move] == EMPTY]
+
+    if open_corners:
+        return random.choice(open_corners)
+
+    return random.choice(available_moves(board))
+
+
+def minimax(board, computer_letter, player_letter, maximizing, depth, alpha, beta):
+    """
+    Evaluate the best possible score.
+    Uses alpha-beta pruning to make hard AI faster.
+    """
+    if check_winner(board, computer_letter):
+        return 10 - depth
+
+    if check_winner(board, player_letter):
+        return depth - 10
+
+    if is_board_full(board):
+        return 0
+
+    if maximizing:
+        best_score = float("-inf")
+
+        for move in available_moves(board):
+            board[move] = computer_letter
+            score = minimax(
+                board, computer_letter, player_letter,
+                False, depth + 1, alpha, beta
+            )
+            board[move] = EMPTY
+
+            best_score = max(best_score, score)
+            alpha = max(alpha, best_score)
+
+            if beta <= alpha:
+                break
+
+        return best_score
+
+    best_score = float("inf")
+
+    for move in available_moves(board):
+        board[move] = player_letter
+        score = minimax(
+            board, computer_letter, player_letter,
+            True, depth + 1, alpha, beta
+        )
+        board[move] = EMPTY
+
+        best_score = min(best_score, score)
+        beta = min(beta, best_score)
+
+        if beta <= alpha:
             break
-        
+
+    return best_score
+
+
+def get_hard_move(board, computer_letter, player_letter):
+    """Choose the strongest possible move using minimax."""
+    best_score = float("-inf")
+    best_moves = []
+
+    for move in available_moves(board):
+        board[move] = computer_letter
+
+        score = minimax(
+            board, computer_letter, player_letter,
+            False, 0, float("-inf"), float("inf")
+        )
+
+        board[move] = EMPTY
+
+        if score > best_score:
+            best_score = score
+            best_moves = [move]
+        elif score == best_score:
+            best_moves.append(move)
+
+    return random.choice(best_moves)
+
+
+def get_computer_move(board, computer_letter, player_letter, difficulty):
+    """Return a move based on selected difficulty."""
+    if difficulty == "easy":
+        return random.choice(available_moves(board))
+
+    if difficulty == "medium":
+        return get_medium_move(board, computer_letter, player_letter)
+
+    return get_hard_move(board, computer_letter, player_letter)
+
+
+def play_game(difficulty, scores):
+    """Run one complete game."""
+    board = [EMPTY] * 9
+    player_letter, computer_letter = choose_letter()
+
+    # X always starts in standard Tic-Tac-Toe.
+    turn = PLAYER if player_letter == "X" else COMPUTER
+
+    print(f"\nYou are {player_letter}. Computer is {computer_letter}.")
+    print(f"{turn.capitalize()} goes first.")
+
+    while True:
+        draw_board(board)
+
+        if turn == PLAYER:
+            move = get_player_move(board)
+
+            if move is None:
+                print("\nYou resigned. Computer wins this round.")
+                scores[COMPUTER] += 1
+                return
+
+            make_move(board, move, player_letter)
+
+            if check_winner(board, player_letter):
+                draw_board(board)
+                print("You won! Excellent game.")
+                scores[PLAYER] += 1
+                return
+
+            turn = COMPUTER
+
+        else:
+            print("Computer is thinking...")
+            move = get_computer_move(
+                board, computer_letter, player_letter, difficulty
+            )
+            make_move(board, move, computer_letter)
+
+            if check_winner(board, computer_letter):
+                draw_board(board)
+                print("The computer wins this round.")
+                scores[COMPUTER] += 1
+                return
+
+            turn = PLAYER
+
+        if is_board_full(board):
+            draw_board(board)
+            print("It is a tie.")
+            scores["ties"] += 1
+            return
+
+
+def show_scoreboard(scores):
+    """Display session statistics."""
+    print("\n====== SCOREBOARD ======")
+    print(f"You:      {scores[PLAYER]}")
+    print(f"Computer: {scores[COMPUTER]}")
+    print(f"Ties:     {scores['ties']}")
+    print("========================")
+
+
+def main():
+    print("=" * 32)
+    print("   ADVANCED TIC-TAC-TOE")
+    print("=" * 32)
+
+    scores = {
+        PLAYER: 0,
+        COMPUTER: 0,
+        "ties": 0
+    }
+
+    difficulty = choose_difficulty()
+
+    while True:
+        play_game(difficulty, scores)
+        show_scoreboard(scores)
+
+        again = get_choice(
+            "\nPlay again? (y = same difficulty, d = change difficulty, n = quit): ",
+            ["y", "d", "n"]
+        )
+
+        if again == "n":
+            print("\nThanks for playing!")
+            break
+
+        if again == "d":
+            difficulty = choose_difficulty()
+
+
 if __name__ == "__main__":
     main()
