@@ -1,64 +1,159 @@
-# Script Name		: check_file.py
+#!/usr/bin/env python3
+"""
+check_file.py
 
-# Author		: Craig Richards
-# Created		: 20 May 2013
-# Last Modified		:
-# Version		: 1.0
+Check whether one or more files exist and can be read, then display their contents.
 
-# Modifications	: with statement added to ensure correct file closure
+Examples:
+    python check_file.py notes.txt report.txt
+    python check_file.py --line-numbers file.txt
+    python check_file.py --max-chars 5000 file.txt
+    python check_file.py --full large_file.txt
+"""
 
-# Description	: Check a file exists and that we can read the file
-from __future__ import print_function
-import sys  # Import the Modules
-import os  # Import the Modules
+from __future__ import annotations
 
-
-# Prints usage if not appropriate length of arguments are provided
-
-
-def usage():
-    print('[-] Usage: python check_file.py [filename1] [filename2] ... [filenameN]')
+import argparse
+import sys
+from pathlib import Path
 
 
-# Readfile Functions which open the file that is passed to the script
-def readfile(filename):
-    with open(filename, 'r') as f:  # Ensure file is correctly closed under
-        read_file = f.read()  # all circumstances
-    print(read_file)
-    print()
-    print('#' * 80)
-    print()
+SEPARATOR = "#" * 80
 
 
-def main():
-    # Check the arguments passed to the script
-    if len(sys.argv) >= 2:
-        file_names = sys.argv[1:]
-        filteredfilenames_1 = list(file_names)  # To counter changing in the same list which you are iterating
-        filteredfilenames_2 = list(file_names)
-        # Iterate for each filename passed in command line argument
-        for filename in filteredfilenames_1:
-            if not os.path.isfile(filename):  # Check the File exists
-                print('[-] ' + filename + ' does not exist.')
-                filteredfilenames_2.remove(filename)  # remove non existing files from fileNames list
-                continue
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Check that files exist and are readable, then print their contents."
+    )
 
-            # Check you can read the file
-            if not os.access(filename, os.R_OK):
-                print('[-] ' + filename + ' access denied')
-                # remove non readable fileNames
-                filteredfilenames_2.remove(filename)
-                continue
+    parser.add_argument(
+        "files",
+        nargs="+",
+        type=Path,
+        help="One or more files to check.",
+    )
 
-        # Read the content of each file that both exists and is readable
-        for filename in filteredfilenames_2:
-            # Display Message and read the file contents
-            print('[+] Reading from : ' + filename)
-            readfile(filename)
+    parser.add_argument(
+        "--encoding",
+        default="utf-8",
+        help="Text encoding to use when reading files. Default: utf-8",
+    )
 
+    parser.add_argument(
+        "--max-chars",
+        type=int,
+        default=20_000,
+        help="Maximum characters shown per file. Default: 20000",
+    )
+
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Show the complete file, even if it is very large.",
+    )
+
+    parser.add_argument(
+        "--line-numbers",
+        action="store_true",
+        help="Display line numbers beside file contents.",
+    )
+
+    return parser
+
+
+def format_with_line_numbers(content: str) -> str:
+    lines = content.splitlines()
+
+    if not lines:
+        return "(File is empty)"
+
+    width = len(str(len(lines)))
+    return "\n".join(
+        f"{number:>{width}} | {line}"
+        for number, line in enumerate(lines, start=1)
+    )
+
+
+def read_and_display_file(
+    path: Path,
+    encoding: str,
+    max_chars: int,
+    show_full_file: bool,
+    line_numbers: bool,
+) -> bool:
+    """Read and display a file. Returns True when successful."""
+
+    if not path.exists():
+        print(f"[-] {path}: file does not exist.")
+        return False
+
+    if not path.is_file():
+        print(f"[-] {path}: not a regular file.")
+        return False
+
+    try:
+        with path.open("r", encoding=encoding, errors="replace") as file:
+            limit = -1 if show_full_file else max_chars + 1
+            content = file.read(limit)
+
+    except PermissionError:
+        print(f"[-] {path}: access denied.")
+        return False
+    except OSError as error:
+        print(f"[-] {path}: could not be read ({error}).")
+        return False
+
+    truncated = not show_full_file and len(content) > max_chars
+
+    if truncated:
+        content = content[:max_chars]
+
+    print(f"[+] Reading from: {path.resolve()}")
+    print(f"    Encoding: {encoding}")
+
+    if line_numbers:
+        print(format_with_line_numbers(content))
     else:
-        usage()  # Print usage if not all parameters passed/Checked
+        print(content if content else "(File is empty)")
+
+    if truncated:
+        print(
+            f"\n[!] Output truncated after {max_chars:,} characters. "
+            "Use --full to show everything."
+        )
+
+    print(f"\n{SEPARATOR}\n")
+    return True
 
 
-if __name__ == '__main__':
-    main()
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if args.max_chars < 1:
+        parser.error("--max-chars must be at least 1.")
+
+    failures = 0
+
+    for file_path in args.files:
+        success = read_and_display_file(
+            path=file_path,
+            encoding=args.encoding,
+            max_chars=args.max_chars,
+            show_full_file=args.full,
+            line_numbers=args.line_numbers,
+        )
+
+        if not success:
+            failures += 1
+
+    if failures:
+        print(f"[!] Finished with {failures} file error(s).")
+        return 1
+
+    print("[+] All files were read successfully.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
