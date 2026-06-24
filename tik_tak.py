@@ -1,111 +1,137 @@
-#Tik-tak game
+"""
+Advanced Tic-Tac-Toe
+Two-player terminal game
+"""
+
+from typing import List, Optional
 
 
-board=["anything",1,2,3,4,5,6,7,8,9]
-switch="p1"
-j=9
-print("\n\t\t\tTIK-TAC-TOE")
-def print_board():
-    #import os
-    #os.system('cls')
-    print("\n\n")
-    print("    |     |" )
-    print("",board[1]," | ",board[2]," | ",board[3] )
-    print("____|_____|____")
-    print("    |     |" )
-    print("",board[4]," | ",board[5]," | ",board[6] )
-    print("____|_____|____")
-    print("    |     |" )
-    print("",board[7]," | ",board[8]," | ",board[9] )
-    print("    |     |" )
-def enter_number(p1_sign,p2_sign):
-    global switch
-    global j
-    k=9
-    while(j):
-        if k==0:
+WINNING_COMBINATIONS = (
+    (0, 1, 2),
+    (3, 4, 5),
+    (6, 7, 8),
+    (0, 3, 6),
+    (1, 4, 7),
+    (2, 5, 8),
+    (0, 4, 8),
+    (2, 4, 6),
+)
+
+
+def create_board() -> List[str]:
+    """Create an empty numbered board."""
+    return [str(number) for number in range(1, 10)]
+
+
+def print_board(board: List[str]) -> None:
+    """Display the current board."""
+    print("\n")
+    print(f" {board[0]} | {board[1]} | {board[2]} ")
+    print("---+---+---")
+    print(f" {board[3]} | {board[4]} | {board[5]} ")
+    print("---+---+---")
+    print(f" {board[6]} | {board[7]} | {board[8]} ")
+    print()
+
+
+def choose_symbol(player_number: int, unavailable: Optional[str] = None) -> str:
+    """Allow a player to choose X or O."""
+    while True:
+        symbol = input(f"Player {player_number}, choose X or O: ").strip().upper()
+
+        if symbol not in ("X", "O"):
+            print("Please enter X or O.")
+        elif symbol == unavailable:
+            print(f"That symbol is already taken. Choose {'O' if symbol == 'X' else 'X'}.")
+        else:
+            return symbol
+
+
+def get_move(board: List[str], player_number: int, symbol: str) -> int:
+    """Get and validate a player's board position."""
+    while True:
+        choice = input(f"Player {player_number} ({symbol}), choose a position (1-9): ").strip()
+
+        if not choice.isdigit():
+            print("Please enter a number from 1 to 9.")
+            continue
+
+        position = int(choice)
+
+        if position < 1 or position > 9:
+            print("That position is outside the board. Choose 1 to 9.")
+            continue
+
+        index = position - 1
+
+        if board[index] in ("X", "O"):
+            print("That position is already taken. Choose another one.")
+            continue
+
+        return index
+
+
+def check_winner(board: List[str], symbol: str) -> bool:
+    """Return True when the supplied symbol has won."""
+    return any(
+        board[a] == board[b] == board[c] == symbol
+        for a, b, c in WINNING_COMBINATIONS
+    )
+
+
+def is_draw(board: List[str]) -> bool:
+    """Return True when no free spaces remain."""
+    return all(space in ("X", "O") for space in board)
+
+
+def play_game() -> None:
+    """Run one complete game."""
+    board = create_board()
+
+    print("\n" + "=" * 35)
+    print("          TIC-TAC-TOE")
+    print("=" * 35)
+    print("Choose positions using the numbers shown.")
+
+    print_board(board)
+
+    player_1_symbol = choose_symbol(1)
+    player_2_symbol = choose_symbol(2, unavailable=player_1_symbol)
+
+    current_player = 1
+    symbols = {
+        1: player_1_symbol,
+        2: player_2_symbol,
+    }
+
+    while True:
+        current_symbol = symbols[current_player]
+        move = get_move(board, current_player, current_symbol)
+
+        board[move] = current_symbol
+        print_board(board)
+
+        if check_winner(board, current_symbol):
+            print(f"Congratulations! Player {current_player} ({current_symbol}) wins! 🏆")
             break
-        
-        if switch=="p1":
-            p1_input=int(input("\nplayer 1 :- "))
-            if p1_input<=0:
-                print("chose number from given board")
-            else:
-                for e in range(1,10):
-                    if board[e]==p1_input:
-                        board[e]=p1_sign
-                        print_board()
-                        c=checkwin()
-                        if c==1:
-                            print("\n\n Congratulation ! player 1 win ")
-                            return
-                        
-                        
-                        switch="p2"
-                        j-=1
-                        k-=1
-                        if k==0:
-                            print("\n\nGame is over")
-                            break
-                        
-        if k==0:
-            
-            break
-                   
-        if switch=="p2":
-            p2_input=int(input("\nplayer 2 :- "))
-            if p2_input<=0:
-                print("chose number from given board")
-                #return
-            else:
-                for e in range(1,10):
-                    if board[e]==p2_input:
-                        board[e]=p2_sign
-                        print_board()
-                        w=checkwin()
-                        if w==1:
-                            print("\n\n Congratulation ! player 2 win")
-                            return
-                        
-                        switch="p1"
-                        j-=1
-                        k-=1
-                        
-                    
-def checkwin():
-    if board[1]==board[2]==board[3]:
-        
-        return 1
-    elif board[4]==board[5]==board[6]:
-        
-        return 1
-    elif board[7]==board[8]==board[9]:
-        
-        return 1
-    elif board[1]==board[4]==board[7]:
-        
-        return 1
 
-    elif board[2]==board[5]==board[8]:
-        
-        return 1
-    elif board[3]==board[6]==board[9]:
-        
-        return 1
-    elif board[1]==board[5]==board[9]:
-        
-        return 1
-    elif board[3]==board[5]==board[7]:
-        
-        return 1
-    else:
-        print("\n\nGame continue")
-        
-def play():
-    print_board()
-    p1_sign=input("\n\nplayer 1 chose your sign [0/x] = ")
-    p2_sign=input("player 2 chose your sign [0/x] = ")
-    enter_number(p1_sign,p2_sign)
-    print("\n\n\t\t\tDeveloped By :- UTKARSH MATHUR")
-if __name__=="__main__":
-    play()
+        if is_draw(board):
+            print("The game is a draw!")
+            break
+
+        current_player = 2 if current_player == 1 else 1
+
+
+def main() -> None:
+    """Allow repeated games."""
+    while True:
+        play_game()
+
+        again = input("\nPlay again? (Y/N): ").strip().upper()
+        if again != "Y":
+            print("\nThanks for playing Tic-Tac-Toe!")
+            break
+
+
+if __name__ == "__main__":
+    main()
