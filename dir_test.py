@@ -1,33 +1,60 @@
-# Script Name		: dir_test.py
-# Author				: Craig Richards
-# Created				: 29th November 2011
-# Last Modified		:
-# Version				: 1.0
-# Modifications		:
+#!/usr/bin/env python3
+"""
+Script Name: dir_test.py
+Description: Check whether a directory exists and optionally create it.
+"""
 
-# Description			: Tests to see if the directory testdir exists, if not it will create the directory for you
-from __future__ import print_function
-import os  # Import the OS Module
-import sys
+from pathlib import Path
 
 
-def main():
-    if sys.version_info.major >= 3:  # if the interpreter version is 3.X, use 'input',
-        input_func = input  # otherwise use 'raw_input'
-    else:
-        input_func = raw_input
+def get_directory_path() -> Path:
+    """Ask the user for a directory path and return an expanded Path object."""
+    while True:
+        user_input = input("Enter the directory path to check: ").strip()
 
-    CheckDir = input_func("Enter the name of the directory to check : ")
-    print()
+        if not user_input:
+            print("Please enter a directory path.")
+            continue
 
-    if os.path.exists(CheckDir):  # Checks if the dir exists
-        print("The directory exists")
-    else:
-        print("No directory found for " + CheckDir)  # Output if no directory
-        print()
-        os.makedirs(CheckDir)  # Creates a new dir for the given name
-        print("Directory created for " + CheckDir)
+        return Path(user_input).expanduser()
 
 
-if __name__ == '__main__':
+def check_or_create_directory(directory: Path) -> None:
+    """Check whether a directory exists; create it if needed."""
+    try:
+        if directory.exists():
+            if directory.is_dir():
+                print(f"\nDirectory already exists:\n  {directory.resolve()}")
+            else:
+                print(
+                    f"\nA file already exists at this location, so a directory "
+                    f"cannot be created:\n  {directory.resolve()}"
+                )
+            return
+
+        print(f"\nDirectory does not exist:\n  {directory}")
+
+        answer = input("Create it? [y/N]: ").strip().lower()
+        if answer not in {"y", "yes"}:
+            print("No changes made.")
+            return
+
+        directory.mkdir(parents=True, exist_ok=True)
+        print(f"\nDirectory created successfully:\n  {directory.resolve()}")
+
+    except PermissionError:
+        print("\nPermission denied. Try a location you are allowed to modify.")
+    except OSError as error:
+        print(f"\nCould not create or inspect the directory: {error}")
+
+
+def main() -> None:
+    print("Directory Checker")
+    print("-" * 30)
+
+    directory = get_directory_path()
+    check_or_create_directory(directory)
+
+
+if __name__ == "__main__":
     main()
