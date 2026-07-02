@@ -1,50 +1,470 @@
-import mechanize
-import urllib2
-from bs4 import BeautifulSoup
+#!/usr/bin/env python3
+"""Movie Finder GUI
 
-# Create a Browser
-browser = mechanize.Browser()
+A modern Python 3 replacement for a legacy IMDb scraper.
 
-# Disable loading robots.txt
-browser.set_handle_robots(False)
+Features
+--------
+- Tkinter desktop interface
+- Search by title, optional year, and type
+- Results list with pagination
+- Full title details, including director, genre, rating, runtime and plot
+- Open/copy IMDb links
+- Background requests so the GUI stays responsive
+- Timeouts, retries, input validation and useful error messages
 
-browser.addheaders = [('User-agent',
-                 'Mozilla/4.0 (compatible; MSIE 5.0; Windows 98;)')]
+Data source
+-----------
+This application uses the OMDb API. Get a key at https://www.omdbapi.com/apikey.aspx
+and either enter it in the app or set OMDB_API_KEY in your environment.
 
-movie_title = raw_input("Enter movie title: ")
+Install
+-------
+python -m pip install requests
 
-movie_types = ('feature', 'tv_movie', 'tv_series', 'tv_episode', 'tv_special',
-    'mini_series', 'documentary', 'game', 'short', 'video', 'tvshort')
+Run
+---
+python movie_finder_gui.py
+"""
 
-# Navigate
-browser.open('http://www.imdb.com/search/title')
+from __future__ import annotations
 
-# Choose a form
-browser.select_form(nr=1)
+import json
+import os
+import queue
+import threading
+import webbrowser
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Optional
 
-browser['title'] = movie_title
+import tkinter as tk
+from tkinter import messagebox, ttk
+from tkinter.scrolledtext import ScrolledText
 
-# Check all the boxes of movie types
-for type in movie_types:
-    browser.find_control(type='checkbox',nr=0).get(type).selected = True
-
-# Submit
-fd   = browser.submit()
-soup = BeautifulSoup(fd.read(),'html5lib')
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
-# Updated from td tag to h3 tag
-for div in soup.findAll('h3', {'class': 'lister-item-header'}, limit=1):
-    a = div.findAll('a')[0]
-    hht = 'http://www.imdb.com' + a.attrs['href']
-    print(hht)
-    page  = urllib2.urlopen(hht)
-    soup2 = BeautifulSoup(page.read(),'html.parser')
-    find = soup2.find
+APP_NAME = "Movie Finder"
+API_URL = "https://www.omdbapi.com/"
+DEFAULT_TIMEOUT_SECONDS = 12
+SETTINGS_PATH = Path.home() / ".movie_finder_settings.json"
 
-    print("Title: " + find(itemprop='name').get_text().strip())
-    print("Duration: " + find(itemprop='duration').get_text().strip())
-    print("Director: " + find(itemprop='director').get_text().strip())
-    print("Genre: " + find(itemprop='genre').get_text().strip())
-    print("IMDB rating: " + find(itemprop='ratingValue').get_text().strip())
-    print("Summary: " + find(itemprop='description').get_text().strip())
+
+class MovieApiError(RuntimeError):
+    """Raised when the remote movie service returns an expected error."""
+
+
+@dataclass(frozen=True)
+class SearchResult:
+    imdb_id: str
+    title: str
+    year: str
+    media_type: str
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> "SearchResult":
+        return cls(
+            imdb_id=str(raw.get("imdbID", "")),
+            title=str(raw.get("Title", "Unknown title")),
+            year=str(raw.get("Year", "Unknown year")),
+            media_type=str(raw.get("Type", "unknown")).replace("_", " ").title(),
+        )
+
+
+class OmdbClient:
+    """Small, resilient client for title searching and detail lookup."""
+
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key.strip()
+        retry = Retry(
+            total=2,
+            connect=2,
+            read=2,
+            backoff_factor=0.4,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset({"GET"}),
+        )
+        self.session = requests.Session()
+        self.session.headers.update({"User-Agent": f"{APP_NAME}/1.0"})
+        self.session.mount("https://", HTTPAdapter(max_retries=retry))
+
+    def _request(self, params: dict[str, str]) -> dict[str, Any]:
+        if not self.api_key:
+            raise MovieApiError("Add an OMDb API key before searching.")
+
+        try:
+            response = self.session.get(
+                API_URL,
+                params={**params, "apikey": self.api_key},
+                timeout=DEFAULT_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+        except requests.Timeout as exc:
+            raise MovieApiError("The request timed out. Check your connection and try again.") from exc
+        except requests.RequestException as exc:
+            raise MovieApiError(f"Could not contact OMDb: {exc}") from exc
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise MovieApiError("OMDb returned an invalid response.") from exc
+
+        if payload.get("Response") == "False":
+            raise MovieApiError(str(payload.get("Error", "No results found.")))
+        return payload
+
+    def search(
+        self,
+        title: str,
+        year: str = "",
+        media_type: str = "",
+        page: int = 1,
+    ) -> tuple[list[SearchResult], int]:
+        params: dict[str, str] = {"s": title, "page": str(page)}
+        if year:
+            params["y"] = year
+        if media_type and media_type != "Any":
+            params["type"] = media_type
+
+        payload = self._request(params)
+        results = [SearchResult.from_api(item) for item in payload.get("Search", [])]
+        total_results = int(payload.get("totalResults", len(results)))
+        return results, total_results
+
+    def get_details(self, imdb_id: str) -> dict[str, Any]:
+        return self._request({"i": imdb_id, "plot": "full"})
+
+
+class MovieFinderApp(tk.Tk):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title(APP_NAME)
+        self.minsize(930, 620)
+        self.geometry("1120x720")
+
+        self.results: list[SearchResult] = []
+        self.selected_details: Optional[dict[str, Any]] = None
+        self.result_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self.current_page = 1
+        self.total_results = 0
+        self.is_busy = False
+
+        saved_key = self._load_saved_key()
+        self.api_key_var = tk.StringVar(value=os.getenv("OMDB_API_KEY", saved_key))
+        self.title_var = tk.StringVar()
+        self.year_var = tk.StringVar()
+        self.type_var = tk.StringVar(value="Any")
+        self.status_var = tk.StringVar(value="Enter a title and search.")
+        self.page_var = tk.StringVar(value="Page 1")
+
+        self._build_ui()
+        self.after(100, self._process_queue)
+
+    def _build_ui(self) -> None:
+        outer = ttk.Frame(self, padding=14)
+        outer.pack(fill="both", expand=True)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(2, weight=1)
+
+        credentials = ttk.LabelFrame(outer, text="API access", padding=10)
+        credentials.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        credentials.columnconfigure(1, weight=1)
+
+        ttk.Label(credentials, text="OMDb API key:").grid(row=0, column=0, sticky="w")
+        self.api_key_entry = ttk.Entry(credentials, textvariable=self.api_key_var, show="•")
+        self.api_key_entry.grid(row=0, column=1, sticky="ew", padx=8)
+        ttk.Button(credentials, text="Save key locally", command=self._save_key).grid(row=0, column=2)
+        ttk.Button(credentials, text="Get a key", command=lambda: webbrowser.open_new_tab("https://www.omdbapi.com/apikey.aspx")).grid(row=0, column=3, padx=(8, 0))
+
+        search = ttk.LabelFrame(outer, text="Find a title", padding=10)
+        search.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        search.columnconfigure(1, weight=1)
+
+        ttk.Label(search, text="Title:").grid(row=0, column=0, sticky="w")
+        title_entry = ttk.Entry(search, textvariable=self.title_var)
+        title_entry.grid(row=0, column=1, sticky="ew", padx=(8, 8))
+        title_entry.bind("<Return>", lambda _event: self.search_titles(reset_page=True))
+
+        ttk.Label(search, text="Year:").grid(row=0, column=2, sticky="w")
+        year_entry = ttk.Entry(search, textvariable=self.year_var, width=8)
+        year_entry.grid(row=0, column=3, sticky="w", padx=(8, 8))
+        year_entry.bind("<Return>", lambda _event: self.search_titles(reset_page=True))
+
+        ttk.Label(search, text="Type:").grid(row=0, column=4, sticky="w")
+        type_box = ttk.Combobox(
+            search,
+            textvariable=self.type_var,
+            values=("Any", "movie", "series", "episode"),
+            state="readonly",
+            width=11,
+        )
+        type_box.grid(row=0, column=5, sticky="w", padx=(8, 8))
+
+        self.search_button = ttk.Button(search, text="Search", command=lambda: self.search_titles(reset_page=True))
+        self.search_button.grid(row=0, column=6, sticky="e")
+
+        content = ttk.PanedWindow(outer, orient="horizontal")
+        content.grid(row=2, column=0, sticky="nsew")
+
+        left = ttk.Frame(content, padding=(0, 0, 8, 0))
+        right = ttk.Frame(content, padding=(8, 0, 0, 0))
+        content.add(left, weight=1)
+        content.add(right, weight=2)
+
+        left.rowconfigure(1, weight=1)
+        left.columnconfigure(0, weight=1)
+        ttk.Label(left, text="Search results").grid(row=0, column=0, sticky="w", pady=(0, 6))
+
+        columns = ("title", "year", "type")
+        self.results_tree = ttk.Treeview(left, columns=columns, show="headings", selectmode="browse")
+        self.results_tree.heading("title", text="Title")
+        self.results_tree.heading("year", text="Year")
+        self.results_tree.heading("type", text="Type")
+        self.results_tree.column("title", width=260, anchor="w")
+        self.results_tree.column("year", width=74, anchor="center")
+        self.results_tree.column("type", width=88, anchor="center")
+        self.results_tree.grid(row=1, column=0, sticky="nsew")
+        self.results_tree.bind("<<TreeviewSelect>>", self._on_result_selected)
+
+        scrollbar = ttk.Scrollbar(left, orient="vertical", command=self.results_tree.yview)
+        scrollbar.grid(row=1, column=1, sticky="ns")
+        self.results_tree.configure(yscrollcommand=scrollbar.set)
+
+        pager = ttk.Frame(left)
+        pager.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        pager.columnconfigure(1, weight=1)
+        self.previous_button = ttk.Button(pager, text="← Previous", command=self._previous_page)
+        self.previous_button.grid(row=0, column=0, sticky="w")
+        ttk.Label(pager, textvariable=self.page_var).grid(row=0, column=1)
+        self.next_button = ttk.Button(pager, text="Next →", command=self._next_page)
+        self.next_button.grid(row=0, column=2, sticky="e")
+
+        right.rowconfigure(1, weight=1)
+        right.columnconfigure(0, weight=1)
+        ttk.Label(right, text="Title details").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.details_text = ScrolledText(right, wrap="word", height=24, state="disabled", font=("TkDefaultFont", 10))
+        self.details_text.grid(row=1, column=0, sticky="nsew")
+
+        actions = ttk.Frame(right)
+        actions.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        self.open_button = ttk.Button(actions, text="Open on IMDb", command=self._open_on_imdb, state="disabled")
+        self.open_button.pack(side="left")
+        self.copy_button = ttk.Button(actions, text="Copy IMDb link", command=self._copy_imdb_link, state="disabled")
+        self.copy_button.pack(side="left", padx=(8, 0))
+
+        status = ttk.Label(outer, textvariable=self.status_var, anchor="w", relief="sunken", padding=(8, 5))
+        status.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+
+        title_entry.focus_set()
+        self._update_pager()
+
+    def _load_saved_key(self) -> str:
+        try:
+            content = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+            return str(content.get("omdb_api_key", ""))
+        except (OSError, ValueError, TypeError):
+            return ""
+
+    def _save_key(self) -> None:
+        key = self.api_key_var.get().strip()
+        if not key:
+            messagebox.showwarning(APP_NAME, "Enter an API key before saving it.")
+            return
+        try:
+            SETTINGS_PATH.write_text(json.dumps({"omdb_api_key": key}), encoding="utf-8")
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"Could not save the key:\n{exc}")
+            return
+        self.status_var.set(f"API key saved to {SETTINGS_PATH}")
+
+    @staticmethod
+    def _validate_year(year: str) -> Optional[str]:
+        year = year.strip()
+        if not year:
+            return None
+        if len(year) != 4 or not year.isdigit() or not (1888 <= int(year) <= 2100):
+            return "Year must be a four-digit value between 1888 and 2100."
+        return None
+
+    def search_titles(self, *, reset_page: bool = False) -> None:
+        title = self.title_var.get().strip()
+        year = self.year_var.get().strip()
+        api_key = self.api_key_var.get().strip()
+
+        if not title:
+            messagebox.showwarning(APP_NAME, "Enter a title to search for.")
+            return
+        if not api_key:
+            messagebox.showwarning(APP_NAME, "Enter an OMDb API key first.")
+            return
+        validation_error = self._validate_year(year)
+        if validation_error:
+            messagebox.showwarning(APP_NAME, validation_error)
+            return
+
+        if reset_page:
+            self.current_page = 1
+
+        self._set_busy(True, f"Searching for ‘{title}’…")
+        self._clear_details()
+        thread = threading.Thread(
+            target=self._search_worker,
+            args=(api_key, title, year, self.type_var.get(), self.current_page),
+            daemon=True,
+        )
+        thread.start()
+
+    def _search_worker(self, api_key: str, title: str, year: str, media_type: str, page: int) -> None:
+        try:
+            results, total = OmdbClient(api_key).search(title, year, media_type, page)
+            self.result_queue.put(("search_ok", (results, total)))
+        except MovieApiError as exc:
+            self.result_queue.put(("error", str(exc)))
+
+    def _on_result_selected(self, _event: tk.Event) -> None:
+        selection = self.results_tree.selection()
+        if not selection or self.is_busy:
+            return
+        index = int(selection[0])
+        result = self.results[index]
+        self._set_busy(True, f"Loading details for ‘{result.title}’…")
+        self._clear_details()
+        thread = threading.Thread(
+            target=self._details_worker,
+            args=(self.api_key_var.get().strip(), result.imdb_id),
+            daemon=True,
+        )
+        thread.start()
+
+    def _details_worker(self, api_key: str, imdb_id: str) -> None:
+        try:
+            details = OmdbClient(api_key).get_details(imdb_id)
+            self.result_queue.put(("details_ok", details))
+        except MovieApiError as exc:
+            self.result_queue.put(("error", str(exc)))
+
+    def _process_queue(self) -> None:
+        try:
+            while True:
+                event_name, payload = self.result_queue.get_nowait()
+                if event_name == "search_ok":
+                    self.results, self.total_results = payload
+                    self._populate_results()
+                    self.status_var.set(f"Found {self.total_results:,} matching title(s).")
+                    self._set_busy(False)
+                elif event_name == "details_ok":
+                    self.selected_details = payload
+                    self._render_details(payload)
+                    self.open_button.configure(state="normal")
+                    self.copy_button.configure(state="normal")
+                    self.status_var.set("Details loaded.")
+                    self._set_busy(False)
+                elif event_name == "error":
+                    self.status_var.set(str(payload))
+                    self._set_busy(False)
+                    messagebox.showerror(APP_NAME, str(payload))
+        except queue.Empty:
+            pass
+        finally:
+            self.after(100, self._process_queue)
+
+    def _populate_results(self) -> None:
+        self.results_tree.delete(*self.results_tree.get_children())
+        for index, result in enumerate(self.results):
+            self.results_tree.insert("", "end", iid=str(index), values=(result.title, result.year, result.media_type))
+        self._update_pager()
+
+    def _render_details(self, data: dict[str, Any]) -> None:
+        fields = [
+            ("Title", data.get("Title", "N/A")),
+            ("Year", data.get("Year", "N/A")),
+            ("Type", data.get("Type", "N/A").title()),
+            ("Rated", data.get("Rated", "N/A")),
+            ("Runtime", data.get("Runtime", "N/A")),
+            ("Genre", data.get("Genre", "N/A")),
+            ("IMDb rating", self._format_rating(data.get("imdbRating"), data.get("imdbVotes"))),
+            ("Director", data.get("Director", "N/A")),
+            ("Writer", data.get("Writer", "N/A")),
+            ("Cast", data.get("Actors", "N/A")),
+            ("Released", data.get("Released", "N/A")),
+            ("Language", data.get("Language", "N/A")),
+            ("Country", data.get("Country", "N/A")),
+            ("Awards", data.get("Awards", "N/A")),
+            ("IMDb ID", data.get("imdbID", "N/A")),
+        ]
+        plot = data.get("Plot", "N/A")
+        rendered = "\n".join(f"{label}: {value}" for label, value in fields)
+        rendered += f"\n\nPlot\n{'─' * 45}\n{plot}\n"
+
+        self.details_text.configure(state="normal")
+        self.details_text.delete("1.0", "end")
+        self.details_text.insert("1.0", rendered)
+        self.details_text.configure(state="disabled")
+
+    @staticmethod
+    def _format_rating(rating: Any, votes: Any) -> str:
+        if not rating or rating == "N/A":
+            return "N/A"
+        return f"{rating}/10" + (f" ({votes} votes)" if votes and votes != "N/A" else "")
+
+    def _clear_details(self) -> None:
+        self.selected_details = None
+        self.details_text.configure(state="normal")
+        self.details_text.delete("1.0", "end")
+        self.details_text.configure(state="disabled")
+        self.open_button.configure(state="disabled")
+        self.copy_button.configure(state="disabled")
+
+    def _set_busy(self, busy: bool, status: Optional[str] = None) -> None:
+        self.is_busy = busy
+        new_state = "disabled" if busy else "normal"
+        self.search_button.configure(state=new_state)
+        self.previous_button.configure(state=new_state)
+        self.next_button.configure(state=new_state)
+        if status:
+            self.status_var.set(status)
+        if not busy:
+            self._update_pager()
+
+    def _update_pager(self) -> None:
+        last_page = max(1, (self.total_results + 9) // 10)
+        self.page_var.set(f"Page {self.current_page} of {last_page}")
+        if not self.is_busy:
+            self.previous_button.configure(state="normal" if self.current_page > 1 else "disabled")
+            self.next_button.configure(state="normal" if self.current_page < last_page else "disabled")
+
+    def _previous_page(self) -> None:
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.search_titles(reset_page=False)
+
+    def _next_page(self) -> None:
+        last_page = max(1, (self.total_results + 9) // 10)
+        if self.current_page < last_page:
+            self.current_page += 1
+            self.search_titles(reset_page=False)
+
+    def _imdb_url(self) -> Optional[str]:
+        imdb_id = (self.selected_details or {}).get("imdbID")
+        return f"https://www.imdb.com/title/{imdb_id}/" if imdb_id else None
+
+    def _open_on_imdb(self) -> None:
+        url = self._imdb_url()
+        if url:
+            webbrowser.open_new_tab(url)
+
+    def _copy_imdb_link(self) -> None:
+        url = self._imdb_url()
+        if not url:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(url)
+        self.update()
+        self.status_var.set("IMDb link copied to clipboard.")
+
+
+if __name__ == "__main__":
+    MovieFinderApp().mainloop()
