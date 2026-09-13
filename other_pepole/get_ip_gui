@@ -1,68 +1,1244 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+NetScope IP Utility
+A modern, dependency-free Tkinter network/IP diagnostic utility.
 
-#**************** Modules Require *****************#
-from tkinter import *
+Python: 3.10+
+Dependencies: standard library only
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import json
+import platform
+import queue
 import socket
-from urllib.request import urlopen
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from pathlib import Path
+from tkinter import filedialog, messagebox
+import tkinter as tk
+from tkinter import ttk
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
-#**************** Get IP commands *****************#
-#control buttons
-def get_wan_ip():
-    try :
-        #get ip from http://ipecho.net/plain as text 
-        wan_ip=urlopen('http://ipecho.net/plain').read().decode('utf-8')
-        res.configure(text='Wan IP is : '+wan_ip,fg='#600')
-    except :
-        res.configure(text='Problem in source : http://ipecho.net/plain',fg='red')
-#get local ip     
-def get_local_ip():
+
+APP_NAME = "NetScope IP Utility"
+APP_VERSION = "2.0.0"
+HTTP_TIMEOUT = 5.0
+
+PUBLIC_IPV4_URL = "https://api.ipify.org?format=json"
+PUBLIC_IPV6_URL = "https://api6.ipify.org?format=json"
+
+ROUTE_PROBES = {
+    4: (socket.AF_INET, ("1.1.1.1", 443)),
+    6: (socket.AF_INET6, ("2606:4700:4700::1111", 443, 0, 0)),
+}
+
+AUTO_REFRESH_OPTIONS = {
+    "Off": 0,
+    "30 sec": 30,
+    "60 sec": 60,
+    "5 min": 300,
+}
+
+
+class NetworkError(RuntimeError):
+    """Raised when a network operation cannot produce a valid result."""
+
+
+def utc_timestamp() -> str:
+    """Return an ISO-8601 UTC timestamp."""
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def safe_error_message(exc: BaseException) -> str:
+    """Convert exceptions into concise messages suitable for the GUI."""
+    if isinstance(exc, HTTPError):
+        return f"HTTP {exc.code}: {exc.reason}"
+    if isinstance(exc, URLError):
+        reason = getattr(exc, "reason", exc)
+        return f"Network error: {reason}"
+    if isinstance(exc, socket.gaierror):
+        return f"DNS/host resolution error: {exc}"
+    if isinstance(exc, socket.timeout):
+        return "Network operation timed out"
+    if isinstance(exc, OSError):
+        return f"OS/network error: {exc}"
+    return f"{type(exc).__name__}: {exc}"
+
+
+def fetch_public_ip(version: int) -> str:
+    """
+    Fetch and validate the public IPv4 or IPv6 address over HTTPS.
+
+    ipify provides separate IPv4-only and IPv6-only endpoints.
+    """
+    if version not in (4, 6):
+        raise ValueError("IP version must be 4 or 6")
+
+    url = PUBLIC_IPV4_URL if version == 4 else PUBLIC_IPV6_URL
+    request = Request(
+        url,
+        headers={
+            "User-Agent": f"{APP_NAME}/{APP_VERSION}",
+            "Accept": "application/json",
+            "Cache-Control": "no-cache",
+        },
+        method="GET",
+    )
+
+    with urlopen(request, timeout=HTTP_TIMEOUT) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        payload = json.loads(response.read().decode(charset))
+
+    raw_ip = str(payload.get("ip", "")).strip()
+    if not raw_ip:
+        raise NetworkError("Public IP service returned no IP address")
+
+    parsed = ipaddress.ip_address(raw_ip)
+    if parsed.version != version:
+        raise NetworkError(
+            f"Expected IPv{version}, but service returned IPv{parsed.version}"
+        )
+    return str(parsed)
+
+
+def get_primary_local_ip(version: int) -> str:
+    """
+    Determine the preferred local source address for an outbound route.
+
+    UDP connect() selects a route/source address without sending application data.
+    """
+    if version not in ROUTE_PROBES:
+        raise ValueError("IP version must be 4 or 6")
+
+    family, target = ROUTE_PROBES[version]
+    sock = socket.socket(family, socket.SOCK_DGRAM)
+    sock.settimeout(2.5)
     try:
-        lan_ip=(socket.gethostbyname(socket.gethostname()))
-        res.configure(text='Local IP is : '+lan_ip,fg='#600') 
-    except:
-        res.configure(text='Unkown Error',fg='#red') 
-#**************** about control button *****************#
-#show about info and change the button command and place
-def about():
-    global close_app,frame,info
-    about_app.destroy()
-    frame=Frame(root,width=350,height=2,bg='blue')
-    frame.grid(row=2,column=0,columnspan=4)
-    info=Label(root,text="""
-    Practice Python 
-    Take idea from here :
-    https://github.com/geekcomputers/Python/blob/master/myip.py
-    """,fg='#02F')
-    info.grid(row=3,column=0,columnspan=4,padx=5)    
-    close_app=Button(root,text='Close',command=close_about,bg='#55F')
-    close_app.grid(row=4,column=0,columnspan=4,pady=5)    
-#remove about info and remove close button then return about button in orignal place
-def close_about():
-    global frame,about_app,info
-    info.destroy()
-    frame.destroy()
-    close_app.destroy()
-    about_app=Button(root,text='about',command=about)
-    about_app.grid(row=1,column=2,padx=5,pady=5,sticky=W)    
+        sock.connect(target)
+        local = sock.getsockname()[0]
+    finally:
+        sock.close()
 
-#**************** Tkinter GUI *****************#
-root=Tk()    
-root.title ('Khaled programing practice')
-#all buttons
-res=Label(root,text='00.00.00.00',font=25)
-res_wan_ip=Button(root,text='Get Wan IP',command=get_wan_ip)
-res_local_ip=Button(root,text='Get Local IP',command=get_local_ip)
-about_app=Button(root,text='about',command=about)
-quit_app=Button(root,text='quit',command=quit,bg='#f40')
-#method grid to install the button in window 
-res.grid(row=0,column=0,columnspan=4,sticky=N,padx=10,pady=5)
-res_wan_ip.grid(row=1,column=0,padx=5,pady=5,sticky=W)
-res_local_ip.grid(row=1,column=1,padx=5,pady=5,sticky=W)
-about_app.grid(row=1,column=2,padx=5,pady=5,sticky=W)
-quit_app.grid(row=1,column=3,padx=5,pady=5,sticky=E)
-#run GUI/app
-root.mainloop()
+    parsed = ipaddress.ip_address(local)
+    if parsed.version != version:
+        raise NetworkError(f"Could not determine primary IPv{version} address")
+    return str(parsed)
 
-    
 
+def get_hostname_addresses() -> dict[str, list[str]]:
+    """Resolve the computer hostname and return unique local IPv4/IPv6 addresses."""
+    hostname = socket.gethostname()
+    fqdn = socket.getfqdn()
+
+    addresses: dict[int, set[str]] = {4: set(), 6: set()}
+    results = socket.getaddrinfo(
+        hostname,
+        None,
+        family=socket.AF_UNSPEC,
+        type=socket.SOCK_STREAM,
+    )
+
+    for family, _, _, _, sockaddr in results:
+        if family not in (socket.AF_INET, socket.AF_INET6):
+            continue
+        raw = sockaddr[0].split("%", 1)[0]
+        try:
+            parsed = ipaddress.ip_address(raw)
+        except ValueError:
+            continue
+        addresses[parsed.version].add(str(parsed))
+
+    def sorter(value: str) -> tuple[int, int]:
+        obj = ipaddress.ip_address(value)
+        return (0 if obj.is_loopback else 1, int(obj))
+
+    return {
+        "hostname": hostname,
+        "fqdn": fqdn,
+        "ipv4": sorted(addresses[4], key=sorter),
+        "ipv6": sorted(addresses[6], key=sorter),
+    }
+
+
+def probe_connectivity() -> dict[str, float | str]:
+    """
+    Run two lightweight diagnostics:
+    - DNS resolution for example.com
+    - TCP connection setup to Cloudflare 1.1.1.1:443
+    """
+    dns_start = time.perf_counter()
+    socket.getaddrinfo(
+        "example.com",
+        443,
+        family=socket.AF_UNSPEC,
+        type=socket.SOCK_STREAM,
+    )
+    dns_ms = (time.perf_counter() - dns_start) * 1000.0
+
+    tcp_start = time.perf_counter()
+    with socket.create_connection(("1.1.1.1", 443), timeout=3.0):
+        pass
+    tcp_ms = (time.perf_counter() - tcp_start) * 1000.0
+
+    return {
+        "status": "Online",
+        "dns_ms": round(dns_ms, 1),
+        "tcp_ms": round(tcp_ms, 1),
+    }
+
+
+def classify_ip(ip_text: str) -> dict[str, object]:
+    """Return useful standards-based properties of an IP address."""
+    obj = ipaddress.ip_address(ip_text)
+    return {
+        "address": str(obj),
+        "version": obj.version,
+        "compressed": obj.compressed,
+        "exploded": obj.exploded,
+        "reverse_pointer": obj.reverse_pointer,
+        "is_global": obj.is_global,
+        "is_private": obj.is_private,
+        "is_loopback": obj.is_loopback,
+        "is_link_local": obj.is_link_local,
+        "is_multicast": obj.is_multicast,
+        "is_reserved": obj.is_reserved,
+        "is_unspecified": obj.is_unspecified,
+    }
+
+
+def lookup_target(target: str) -> dict[str, object]:
+    """Resolve a hostname or inspect an IP address without third-party geolocation."""
+    target = target.strip()
+    if not target:
+        raise ValueError("Enter a hostname or IP address")
+
+    try:
+        parsed = ipaddress.ip_address(target.split("%", 1)[0])
+    except ValueError:
+        # Hostname lookup.
+        ascii_target = target.encode("idna").decode("ascii")
+        results = socket.getaddrinfo(
+            ascii_target,
+            None,
+            family=socket.AF_UNSPEC,
+            type=socket.SOCK_STREAM,
+        )
+        ips: set[str] = set()
+        for family, _, _, _, sockaddr in results:
+            if family in (socket.AF_INET, socket.AF_INET6):
+                raw = sockaddr[0].split("%", 1)[0]
+                try:
+                    ips.add(str(ipaddress.ip_address(raw)))
+                except ValueError:
+                    pass
+
+        if not ips:
+            raise NetworkError("No IPv4 or IPv6 addresses were returned")
+
+        ordered = sorted(ips, key=lambda value: (ipaddress.ip_address(value).version, int(ipaddress.ip_address(value))))
+        details = [classify_ip(value) for value in ordered]
+        return {
+            "query_type": "hostname",
+            "query": target,
+            "ascii_hostname": ascii_target,
+            "addresses": details,
+        }
+
+    # IP inspection + best-effort reverse DNS.
+    reverse_name = None
+    aliases: list[str] = []
+    try:
+        reverse_name, aliases, _ = socket.gethostbyaddr(str(parsed))
+    except (socket.herror, socket.gaierror, OSError):
+        pass
+
+    return {
+        "query_type": "ip",
+        "query": target,
+        "details": classify_ip(str(parsed)),
+        "reverse_dns": reverse_name,
+        "aliases": aliases,
+    }
+
+
+class NetScopeApp(tk.Tk):
+    """Responsive Tk/ttk network utility."""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+        self.title(f"{APP_NAME} {APP_VERSION}")
+        self.geometry("980x720")
+        self.minsize(840, 620)
+
+        self.executor = ThreadPoolExecutor(
+            max_workers=6,
+            thread_name_prefix="netscope",
+        )
+        self.event_queue: queue.Queue = queue.Queue()
+        self.pending: set[str] = set()
+        self.auto_refresh_after_id: str | None = None
+        self.theme_mode = "dark"
+        self.history_limit = 250
+
+        self.values: dict[str, object] = {
+            "public_ipv4": None,
+            "public_ipv6": None,
+            "local_ipv4": None,
+            "local_ipv6": None,
+            "hostname": socket.gethostname(),
+            "fqdn": socket.getfqdn(),
+            "hostname_addresses": None,
+            "connectivity": None,
+        }
+
+        self._build_variables()
+        self._configure_styles()
+        self._build_ui()
+        self._bind_shortcuts()
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.after(80, self._poll_worker_events)
+        self.after(150, self.refresh_all)
+
+    # ----------------------------
+    # UI construction
+    # ----------------------------
+
+    def _build_variables(self) -> None:
+        self.public_ipv4_var = tk.StringVar(value="Not checked")
+        self.public_ipv6_var = tk.StringVar(value="Not checked")
+        self.local_ipv4_var = tk.StringVar(value="Not checked")
+        self.local_ipv6_var = tk.StringVar(value="Not checked")
+        self.hostname_var = tk.StringVar(value=socket.gethostname())
+        self.fqdn_var = tk.StringVar(value=socket.getfqdn())
+        self.host_addresses_var = tk.StringVar(value="Not checked")
+        self.connectivity_var = tk.StringVar(value="Not checked")
+        self.status_var = tk.StringVar(value="Ready")
+        self.auto_refresh_var = tk.StringVar(value="Off")
+        self.lookup_var = tk.StringVar()
+
+    def _configure_styles(self) -> None:
+        self.style = ttk.Style(self)
+        try:
+            self.style.theme_use("clam")
+        except tk.TclError:
+            pass
+        self._apply_theme()
+
+    def _palette(self) -> dict[str, str]:
+        if self.theme_mode == "dark":
+            return {
+                "bg": "#101418",
+                "panel": "#171d23",
+                "panel_alt": "#1d252d",
+                "fg": "#e8eef3",
+                "muted": "#9caab5",
+                "accent": "#43a5ff",
+                "accent_active": "#2388df",
+                "border": "#2b3640",
+                "good": "#4bd28f",
+                "bad": "#ff6b6b",
+                "entry": "#11171c",
+            }
+        return {
+            "bg": "#f4f6f8",
+            "panel": "#ffffff",
+            "panel_alt": "#eef2f5",
+            "fg": "#17212b",
+            "muted": "#5f6b76",
+            "accent": "#006edc",
+            "accent_active": "#0057ad",
+            "border": "#d8dee4",
+            "good": "#188754",
+            "bad": "#c03434",
+            "entry": "#ffffff",
+        }
+
+    def _apply_theme(self) -> None:
+        p = self._palette()
+        self.configure(bg=p["bg"])
+
+        self.style.configure(".", font=("Segoe UI", 10))
+        self.style.configure("App.TFrame", background=p["bg"])
+        self.style.configure("Panel.TFrame", background=p["panel"])
+        self.style.configure("Card.TFrame", background=p["panel"], relief="flat")
+        self.style.configure(
+            "Title.TLabel",
+            background=p["bg"],
+            foreground=p["fg"],
+            font=("Segoe UI Semibold", 22),
+        )
+        self.style.configure(
+            "Subtitle.TLabel",
+            background=p["bg"],
+            foreground=p["muted"],
+            font=("Segoe UI", 10),
+        )
+        self.style.configure(
+            "CardTitle.TLabel",
+            background=p["panel"],
+            foreground=p["muted"],
+            font=("Segoe UI Semibold", 9),
+        )
+        self.style.configure(
+            "CardValue.TLabel",
+            background=p["panel"],
+            foreground=p["fg"],
+            font=("Consolas", 12),
+        )
+        self.style.configure(
+            "PanelTitle.TLabel",
+            background=p["panel"],
+            foreground=p["fg"],
+            font=("Segoe UI Semibold", 12),
+        )
+        self.style.configure(
+            "PanelText.TLabel",
+            background=p["panel"],
+            foreground=p["fg"],
+        )
+        self.style.configure(
+            "Muted.TLabel",
+            background=p["panel"],
+            foreground=p["muted"],
+        )
+        self.style.configure(
+            "Status.TLabel",
+            background=p["panel_alt"],
+            foreground=p["muted"],
+            padding=(10, 6),
+        )
+        self.style.configure(
+            "Accent.TButton",
+            padding=(12, 8),
+            background=p["accent"],
+            foreground="#ffffff",
+            borderwidth=0,
+        )
+        self.style.map(
+            "Accent.TButton",
+            background=[("active", p["accent_active"]), ("pressed", p["accent_active"])],
+            foreground=[("disabled", "#c9d2d9"), ("!disabled", "#ffffff")],
+        )
+        self.style.configure("TButton", padding=(10, 7))
+        self.style.configure(
+            "TNotebook",
+            background=p["bg"],
+            borderwidth=0,
+        )
+        self.style.configure(
+            "TNotebook.Tab",
+            padding=(14, 8),
+            background=p["panel_alt"],
+            foreground=p["fg"],
+        )
+        self.style.map(
+            "TNotebook.Tab",
+            background=[("selected", p["panel"])],
+            foreground=[("selected", p["accent"])],
+        )
+        self.style.configure(
+            "Treeview",
+            background=p["panel"],
+            fieldbackground=p["panel"],
+            foreground=p["fg"],
+            bordercolor=p["border"],
+            rowheight=26,
+        )
+        self.style.configure(
+            "Treeview.Heading",
+            background=p["panel_alt"],
+            foreground=p["fg"],
+            relief="flat",
+        )
+        self.style.map(
+            "Treeview",
+            background=[("selected", p["accent"])],
+            foreground=[("selected", "#ffffff")],
+        )
+        self.style.configure(
+            "TEntry",
+            fieldbackground=p["entry"],
+            foreground=p["fg"],
+        )
+        self.style.configure(
+            "TCombobox",
+            fieldbackground=p["entry"],
+            foreground=p["fg"],
+        )
+
+        if hasattr(self, "lookup_text"):
+            self.lookup_text.configure(
+                bg=p["entry"],
+                fg=p["fg"],
+                insertbackground=p["fg"],
+                selectbackground=p["accent"],
+                relief="flat",
+                highlightthickness=1,
+                highlightbackground=p["border"],
+                highlightcolor=p["accent"],
+            )
+
+        if hasattr(self, "theme_button"):
+            self.theme_button.configure(
+                text="Light mode" if self.theme_mode == "dark" else "Dark mode"
+            )
+
+    def _build_ui(self) -> None:
+        outer = ttk.Frame(self, style="App.TFrame", padding=18)
+        outer.grid(row=0, column=0, sticky="nsew")
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        outer.grid_columnconfigure(0, weight=1)
+        outer.grid_rowconfigure(1, weight=1)
+
+        header = ttk.Frame(outer, style="App.TFrame")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        header.grid_columnconfigure(0, weight=1)
+
+        title_box = ttk.Frame(header, style="App.TFrame")
+        title_box.grid(row=0, column=0, sticky="w")
+        ttk.Label(title_box, text=APP_NAME, style="Title.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(
+            title_box,
+            text="Public IP, LAN addressing, DNS lookup and lightweight connectivity diagnostics",
+            style="Subtitle.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(2, 0))
+
+        actions = ttk.Frame(header, style="App.TFrame")
+        actions.grid(row=0, column=1, sticky="e")
+        ttk.Button(
+            actions,
+            text="Refresh all",
+            style="Accent.TButton",
+            command=self.refresh_all,
+        ).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(actions, text="Export", command=self.export_report).grid(
+            row=0, column=1, padx=(0, 8)
+        )
+        self.theme_button = ttk.Button(
+            actions,
+            text="Light mode",
+            command=self.toggle_theme,
+        )
+        self.theme_button.grid(row=0, column=2)
+
+        self.notebook = ttk.Notebook(outer)
+        self.notebook.grid(row=1, column=0, sticky="nsew")
+
+        self.dashboard_tab = ttk.Frame(self.notebook, style="App.TFrame", padding=14)
+        self.lookup_tab = ttk.Frame(self.notebook, style="App.TFrame", padding=14)
+        self.history_tab = ttk.Frame(self.notebook, style="App.TFrame", padding=14)
+        self.about_tab = ttk.Frame(self.notebook, style="App.TFrame", padding=14)
+
+        self.notebook.add(self.dashboard_tab, text="Dashboard")
+        self.notebook.add(self.lookup_tab, text="Lookup")
+        self.notebook.add(self.history_tab, text="History")
+        self.notebook.add(self.about_tab, text="About")
+
+        self._build_dashboard_tab()
+        self._build_lookup_tab()
+        self._build_history_tab()
+        self._build_about_tab()
+
+        status = ttk.Frame(outer, style="Panel.TFrame")
+        status.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        status.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(status, textvariable=self.status_var, style="Status.TLabel").grid(
+            row=0, column=0, sticky="ew"
+        )
+
+        refresh_box = ttk.Frame(status, style="Panel.TFrame", padding=(8, 0))
+        refresh_box.grid(row=0, column=1, sticky="e")
+        ttk.Label(refresh_box, text="Auto refresh:", style="Muted.TLabel").grid(
+            row=0, column=0, padx=(0, 6)
+        )
+        combo = ttk.Combobox(
+            refresh_box,
+            textvariable=self.auto_refresh_var,
+            values=list(AUTO_REFRESH_OPTIONS),
+            state="readonly",
+            width=9,
+        )
+        combo.grid(row=0, column=1)
+        combo.bind("<<ComboboxSelected>>", self._auto_refresh_changed)
+
+    def _build_dashboard_tab(self) -> None:
+        tab = self.dashboard_tab
+        for col in range(2):
+            tab.grid_columnconfigure(col, weight=1, uniform="dashboard")
+        for row in range(4):
+            tab.grid_rowconfigure(row, weight=1)
+
+        self._create_card(
+            tab, 0, 0, "PUBLIC IPv4", self.public_ipv4_var, "public_ipv4"
+        )
+        self._create_card(
+            tab, 0, 1, "PUBLIC IPv6", self.public_ipv6_var, "public_ipv6"
+        )
+        self._create_card(
+            tab, 1, 0, "PRIMARY LAN IPv4", self.local_ipv4_var, "local_ipv4"
+        )
+        self._create_card(
+            tab, 1, 1, "PRIMARY LAN IPv6", self.local_ipv6_var, "local_ipv6"
+        )
+        self._create_card(tab, 2, 0, "HOSTNAME", self.hostname_var, "hostname")
+        self._create_card(tab, 2, 1, "FQDN", self.fqdn_var, "fqdn")
+        self._create_card(
+            tab,
+            3,
+            0,
+            "HOSTNAME-RESOLVED ADDRESSES",
+            self.host_addresses_var,
+            "host_addresses_display",
+        )
+        self._create_card(
+            tab,
+            3,
+            1,
+            "CONNECTIVITY",
+            self.connectivity_var,
+            "connectivity_display",
+        )
+
+    def _create_card(
+        self,
+        parent: ttk.Frame,
+        row: int,
+        column: int,
+        title: str,
+        variable: tk.StringVar,
+        value_key: str,
+    ) -> None:
+        card = ttk.Frame(parent, style="Card.TFrame", padding=16)
+        card.grid(
+            row=row,
+            column=column,
+            sticky="nsew",
+            padx=(0 if column == 0 else 7, 7 if column == 0 else 0),
+            pady=7,
+        )
+        card.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(card, text=title, style="CardTitle.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(
+            card,
+            textvariable=variable,
+            style="CardValue.TLabel",
+            wraplength=360,
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Button(
+            card,
+            text="Copy",
+            command=lambda key=value_key, var=variable: self.copy_value(key, var.get()),
+        ).grid(row=0, column=1, rowspan=2, sticky="e", padx=(10, 0))
+
+    def _build_lookup_tab(self) -> None:
+        tab = self.lookup_tab
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(2, weight=1)
+
+        panel = ttk.Frame(tab, style="Panel.TFrame", padding=16)
+        panel.grid(row=0, column=0, sticky="ew")
+        panel.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(
+            panel,
+            text="Hostname / IP inspector",
+            style="PanelTitle.TLabel",
+        ).grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(
+            panel,
+            text="Resolve A/AAAA addresses or inspect IPv4/IPv6 properties and reverse DNS.",
+            style="Muted.TLabel",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(3, 10))
+
+        self.lookup_entry = ttk.Entry(panel, textvariable=self.lookup_var)
+        self.lookup_entry.grid(row=2, column=0, sticky="ew", padx=(0, 8))
+        self.lookup_entry.bind("<Return>", lambda _event: self.run_lookup())
+
+        ttk.Button(
+            panel,
+            text="Lookup",
+            style="Accent.TButton",
+            command=self.run_lookup,
+        ).grid(row=2, column=1, padx=(0, 8))
+        ttk.Button(panel, text="Clear", command=self.clear_lookup).grid(
+            row=2, column=2
+        )
+
+        ttk.Label(
+            tab,
+            text="Results",
+            style="Subtitle.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(14, 6))
+
+        p = self._palette()
+        self.lookup_text = tk.Text(
+            tab,
+            wrap="word",
+            font=("Consolas", 10),
+            padx=12,
+            pady=12,
+            undo=False,
+            bg=p["entry"],
+            fg=p["fg"],
+            insertbackground=p["fg"],
+            selectbackground=p["accent"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=p["border"],
+            highlightcolor=p["accent"],
+        )
+        self.lookup_text.grid(row=2, column=0, sticky="nsew")
+        self.lookup_text.insert(
+            "1.0",
+            "Enter a hostname such as example.com or an IP address, then press Lookup.",
+        )
+        self.lookup_text.configure(state="disabled")
+
+    def _build_history_tab(self) -> None:
+        tab = self.history_tab
+        tab.grid_rowconfigure(0, weight=1)
+        tab.grid_columnconfigure(0, weight=1)
+
+        frame = ttk.Frame(tab, style="Panel.TFrame", padding=10)
+        frame.grid(row=0, column=0, sticky="nsew")
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+
+        columns = ("time", "item", "value", "status")
+        self.history_tree = ttk.Treeview(
+            frame,
+            columns=columns,
+            show="headings",
+            selectmode="browse",
+        )
+        self.history_tree.heading("time", text="Time")
+        self.history_tree.heading("item", text="Item")
+        self.history_tree.heading("value", text="Value")
+        self.history_tree.heading("status", text="Status")
+
+        self.history_tree.column("time", width=155, stretch=False)
+        self.history_tree.column("item", width=150, stretch=False)
+        self.history_tree.column("value", width=420, stretch=True)
+        self.history_tree.column("status", width=95, stretch=False)
+
+        scrollbar = ttk.Scrollbar(
+            frame,
+            orient="vertical",
+            command=self.history_tree.yview,
+        )
+        self.history_tree.configure(yscrollcommand=scrollbar.set)
+        self.history_tree.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        controls = ttk.Frame(tab, style="App.TFrame")
+        controls.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        ttk.Button(controls, text="Copy selected", command=self.copy_history_selected).pack(
+            side="left"
+        )
+        ttk.Button(controls, text="Clear history", command=self.clear_history).pack(
+            side="left", padx=(8, 0)
+        )
+
+    def _build_about_tab(self) -> None:
+        tab = self.about_tab
+        tab.grid_columnconfigure(0, weight=1)
+
+        panel = ttk.Frame(tab, style="Panel.TFrame", padding=20)
+        panel.grid(row=0, column=0, sticky="nsew")
+        panel.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(
+            panel,
+            text=f"{APP_NAME} {APP_VERSION}",
+            style="PanelTitle.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+
+        about_text = (
+            "A dependency-free modernization of the original Tkinter IP utility.\n\n"
+            "Key design changes:\n"
+            "• HTTPS public-IP queries with response validation.\n"
+            "• IPv4 and IPv6 support.\n"
+            "• Background worker pool so network I/O does not freeze the GUI.\n"
+            "• Thread-safe queue: Tk widgets are updated only on the GUI thread.\n"
+            "• Route-based LAN address detection plus hostname address discovery.\n"
+            "• DNS/TCP diagnostics, arbitrary host/IP lookup, reverse DNS and IP classification.\n"
+            "• History, clipboard helpers, JSON export, auto-refresh and keyboard shortcuts.\n\n"
+            "External endpoints contacted:\n"
+            "• api.ipify.org / api6.ipify.org — public IP discovery\n"
+            "• 1.1.1.1:443 — lightweight route/connectivity probe\n"
+            "• example.com — DNS-resolution test\n\n"
+            "No third-party Python packages are required."
+        )
+
+        ttk.Label(
+            panel,
+            text=about_text,
+            style="PanelText.TLabel",
+            justify="left",
+            wraplength=760,
+        ).grid(row=1, column=0, sticky="nw", pady=(12, 0))
+
+    def _bind_shortcuts(self) -> None:
+        self.bind("<F5>", lambda _event: self.refresh_all())
+        self.bind("<Control-l>", self._focus_lookup)
+        self.bind("<Control-L>", self._focus_lookup)
+        self.bind("<Control-s>", lambda _event: self.export_report())
+        self.bind("<Control-S>", lambda _event: self.export_report())
+        self.bind("<Control-Shift-C>", lambda _event: self.copy_report())
+        self.bind("<Control-Shift-c>", lambda _event: self.copy_report())
+
+    # ----------------------------
+    # Async execution
+    # ----------------------------
+
+    def _submit(self, key: str, function, success_callback) -> None:
+        if key in self.pending:
+            return
+
+        self.pending.add(key)
+        future = self.executor.submit(function)
+
+        def completed(done_future) -> None:
+            try:
+                result = done_future.result()
+            except BaseException as exc:
+                self.event_queue.put(("error", key, success_callback, exc))
+            else:
+                self.event_queue.put(("success", key, success_callback, result))
+
+        future.add_done_callback(completed)
+
+    def _poll_worker_events(self) -> None:
+        try:
+            while True:
+                kind, key, callback, payload = self.event_queue.get_nowait()
+                self.pending.discard(key)
+
+                if kind == "success":
+                    callback(payload)
+                else:
+                    self._task_failed(key, payload)
+
+                if not self.pending:
+                    self.status_var.set(
+                        f"Ready  |  Last completed {datetime.now().strftime('%H:%M:%S')}"
+                    )
+        except queue.Empty:
+            pass
+
+        if self.winfo_exists():
+            self.after(80, self._poll_worker_events)
+
+    # ----------------------------
+    # Refresh and result handling
+    # ----------------------------
+
+    def refresh_all(self) -> None:
+        if self.pending:
+            self.status_var.set(
+                f"Refresh already running ({len(self.pending)} task(s) remaining)"
+            )
+            return
+
+        self.status_var.set("Refreshing network information…")
+
+        self.public_ipv4_var.set("Checking…")
+        self.public_ipv6_var.set("Checking…")
+        self.local_ipv4_var.set("Checking…")
+        self.local_ipv6_var.set("Checking…")
+        self.host_addresses_var.set("Checking…")
+        self.connectivity_var.set("Checking…")
+
+        self.hostname_var.set(socket.gethostname())
+        self.fqdn_var.set(socket.getfqdn())
+        self.values["hostname"] = self.hostname_var.get()
+        self.values["fqdn"] = self.fqdn_var.get()
+
+        self._submit(
+            "public_ipv4",
+            lambda: fetch_public_ip(4),
+            lambda value: self._set_simple_result(
+                "public_ipv4", self.public_ipv4_var, "Public IPv4", value
+            ),
+        )
+        self._submit(
+            "public_ipv6",
+            lambda: fetch_public_ip(6),
+            lambda value: self._set_simple_result(
+                "public_ipv6", self.public_ipv6_var, "Public IPv6", value
+            ),
+        )
+        self._submit(
+            "local_ipv4",
+            lambda: get_primary_local_ip(4),
+            lambda value: self._set_simple_result(
+                "local_ipv4", self.local_ipv4_var, "LAN IPv4", value
+            ),
+        )
+        self._submit(
+            "local_ipv6",
+            lambda: get_primary_local_ip(6),
+            lambda value: self._set_simple_result(
+                "local_ipv6", self.local_ipv6_var, "LAN IPv6", value
+            ),
+        )
+        self._submit(
+            "host_addresses",
+            get_hostname_addresses,
+            self._hostname_addresses_ready,
+        )
+        self._submit(
+            "connectivity",
+            probe_connectivity,
+            self._connectivity_ready,
+        )
+
+    def _set_simple_result(
+        self,
+        key: str,
+        variable: tk.StringVar,
+        history_label: str,
+        value: str,
+    ) -> None:
+        variable.set(value)
+        self.values[key] = value
+        self._record_history(history_label, value, "OK")
+
+    def _hostname_addresses_ready(self, result: dict[str, object]) -> None:
+        self.values["hostname_addresses"] = result
+        self.values["hostname"] = result.get("hostname")
+        self.values["fqdn"] = result.get("fqdn")
+        self.hostname_var.set(str(result.get("hostname", "Unknown")))
+        self.fqdn_var.set(str(result.get("fqdn", "Unknown")))
+
+        ipv4 = result.get("ipv4", [])
+        ipv6 = result.get("ipv6", [])
+        pieces = []
+        if ipv4:
+            pieces.append("IPv4 " + ", ".join(ipv4))
+        if ipv6:
+            pieces.append("IPv6 " + ", ".join(ipv6))
+        display = "  |  ".join(pieces) if pieces else "No hostname addresses found"
+        self.host_addresses_var.set(display)
+        self._record_history("Host addresses", display, "OK")
+
+    def _connectivity_ready(self, result: dict[str, object]) -> None:
+        self.values["connectivity"] = result
+        display = (
+            f"{result['status']}  |  DNS {result['dns_ms']} ms"
+            f"  |  TCP {result['tcp_ms']} ms"
+        )
+        self.connectivity_var.set(display)
+        self._record_history("Connectivity", display, "OK")
+
+    def _task_failed(self, key: str, exc: BaseException) -> None:
+        message = safe_error_message(exc)
+        field_map = {
+            "public_ipv4": (self.public_ipv4_var, "Public IPv4"),
+            "public_ipv6": (self.public_ipv6_var, "Public IPv6"),
+            "local_ipv4": (self.local_ipv4_var, "LAN IPv4"),
+            "local_ipv6": (self.local_ipv6_var, "LAN IPv6"),
+            "host_addresses": (self.host_addresses_var, "Host addresses"),
+            "connectivity": (self.connectivity_var, "Connectivity"),
+            "lookup": (None, "Lookup"),
+        }
+
+        variable, label = field_map.get(key, (None, key))
+        if variable is not None:
+            variable.set("Unavailable")
+            self.values[key] = {
+                "status": "unavailable",
+                "error": message,
+            }
+
+        if key == "lookup":
+            self._set_lookup_text(f"Lookup failed\n\n{message}")
+
+        self._record_history(label, message, "ERROR")
+
+    # ----------------------------
+    # Lookup
+    # ----------------------------
+
+    def run_lookup(self) -> None:
+        target = self.lookup_var.get().strip()
+        if not target:
+            self.status_var.set("Enter a hostname or IP address to inspect")
+            self.lookup_entry.focus_set()
+            return
+
+        if "lookup" in self.pending:
+            self.status_var.set("A lookup is already running")
+            return
+
+        self._set_lookup_text(f"Looking up {target}…")
+        self.status_var.set(f"Looking up {target}…")
+        self._submit(
+            "lookup",
+            lambda: lookup_target(target),
+            self._lookup_ready,
+        )
+
+    def _lookup_ready(self, result: dict[str, object]) -> None:
+        lines: list[str] = []
+        query_type = result["query_type"]
+
+        if query_type == "hostname":
+            lines.append(f"Query: {result['query']}")
+            lines.append(f"Type: hostname")
+            ascii_hostname = result.get("ascii_hostname")
+            if ascii_hostname and ascii_hostname != result["query"]:
+                lines.append(f"IDNA/ASCII: {ascii_hostname}")
+            lines.append("")
+
+            addresses = result.get("addresses", [])
+            for index, details in enumerate(addresses, start=1):
+                lines.append(f"[{index}] IPv{details['version']}  {details['address']}")
+                lines.append(
+                    "    "
+                    f"global={details['is_global']}  "
+                    f"private={details['is_private']}  "
+                    f"loopback={details['is_loopback']}  "
+                    f"link-local={details['is_link_local']}  "
+                    f"multicast={details['is_multicast']}"
+                )
+                lines.append(f"    reverse pointer: {details['reverse_pointer']}")
+                lines.append("")
+            display_for_history = ", ".join(
+                str(item["address"]) for item in addresses
+            )
+        else:
+            details = result["details"]
+            lines.extend(
+                [
+                    f"Query: {result['query']}",
+                    "Type: IP address",
+                    f"Version: IPv{details['version']}",
+                    f"Compressed: {details['compressed']}",
+                    f"Exploded: {details['exploded']}",
+                    f"Reverse pointer: {details['reverse_pointer']}",
+                    f"Reverse DNS: {result.get('reverse_dns') or 'No PTR result'}",
+                    "",
+                    "Properties:",
+                    f"  Global:      {details['is_global']}",
+                    f"  Private:     {details['is_private']}",
+                    f"  Loopback:    {details['is_loopback']}",
+                    f"  Link-local:  {details['is_link_local']}",
+                    f"  Multicast:   {details['is_multicast']}",
+                    f"  Reserved:    {details['is_reserved']}",
+                    f"  Unspecified: {details['is_unspecified']}",
+                ]
+            )
+            aliases = result.get("aliases") or []
+            if aliases:
+                lines.append(f"Aliases: {', '.join(aliases)}")
+            display_for_history = str(details["address"])
+
+        self._set_lookup_text("\n".join(lines).rstrip())
+        self._record_history("Lookup", display_for_history, "OK")
+
+    def _set_lookup_text(self, text: str) -> None:
+        self.lookup_text.configure(state="normal")
+        self.lookup_text.delete("1.0", "end")
+        self.lookup_text.insert("1.0", text)
+        self.lookup_text.configure(state="disabled")
+
+    def clear_lookup(self) -> None:
+        self.lookup_var.set("")
+        self._set_lookup_text(
+            "Enter a hostname such as example.com or an IP address, then press Lookup."
+        )
+        self.lookup_entry.focus_set()
+
+    def _focus_lookup(self, _event=None):
+        self.notebook.select(self.lookup_tab)
+        self.lookup_entry.focus_set()
+        return "break"
+
+    # ----------------------------
+    # History, clipboard and export
+    # ----------------------------
+
+    def _record_history(self, item: str, value: str, status: str) -> None:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.history_tree.insert("", 0, values=(now, item, value, status))
+
+        children = self.history_tree.get_children()
+        if len(children) > self.history_limit:
+            for iid in children[self.history_limit:]:
+                self.history_tree.delete(iid)
+
+    def copy_value(self, key: str, display_value: str) -> None:
+        value = self.values.get(key, display_value)
+
+        if isinstance(value, (dict, list)):
+            text = json.dumps(value, indent=2, ensure_ascii=False)
+        elif value is None:
+            text = display_value
+        else:
+            text = str(value)
+
+        if not text or text in {"Checking…", "Not checked", "Unavailable"}:
+            self.status_var.set("Nothing useful to copy yet")
+            return
+
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.status_var.set("Copied to clipboard")
+
+    def copy_history_selected(self) -> None:
+        selection = self.history_tree.selection()
+        if not selection:
+            self.status_var.set("Select a history row first")
+            return
+        values = self.history_tree.item(selection[0], "values")
+        text = "\t".join(str(value) for value in values)
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.status_var.set("History row copied")
+
+    def clear_history(self) -> None:
+        for iid in self.history_tree.get_children():
+            self.history_tree.delete(iid)
+        self.status_var.set("History cleared")
+
+    def _report_data(self) -> dict[str, object]:
+        history = []
+        for iid in self.history_tree.get_children():
+            values = self.history_tree.item(iid, "values")
+            history.append(
+                {
+                    "time": values[0],
+                    "item": values[1],
+                    "value": values[2],
+                    "status": values[3],
+                }
+            )
+
+        return {
+            "application": {
+                "name": APP_NAME,
+                "version": APP_VERSION,
+            },
+            "generated_at": utc_timestamp(),
+            "system": {
+                "platform": platform.platform(),
+                "python": platform.python_version(),
+                "hostname": socket.gethostname(),
+                "fqdn": socket.getfqdn(),
+            },
+            "network": self.values,
+            "history": history,
+        }
+
+    def copy_report(self) -> None:
+        text = json.dumps(self._report_data(), indent=2, ensure_ascii=False)
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.status_var.set("Full JSON report copied")
+
+    def export_report(self) -> None:
+        suggested = f"netscope-report-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+        filename = filedialog.asksaveasfilename(
+            title="Export NetScope report",
+            initialfile=suggested,
+            defaultextension=".json",
+            filetypes=[("JSON report", "*.json"), ("All files", "*.*")],
+        )
+        if not filename:
+            return
+
+        try:
+            Path(filename).write_text(
+                json.dumps(self._report_data(), indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            messagebox.showerror(
+                "Export failed",
+                f"Could not save the report.\n\n{exc}",
+                parent=self,
+            )
+            return
+
+        self.status_var.set(f"Report exported: {filename}")
+
+    # ----------------------------
+    # Auto refresh and theme
+    # ----------------------------
+
+    def _auto_refresh_changed(self, _event=None) -> None:
+        self._schedule_auto_refresh()
+        seconds = AUTO_REFRESH_OPTIONS[self.auto_refresh_var.get()]
+        if seconds:
+            self.status_var.set(f"Auto refresh enabled every {seconds} seconds")
+        else:
+            self.status_var.set("Auto refresh disabled")
+
+    def _schedule_auto_refresh(self) -> None:
+        if self.auto_refresh_after_id is not None:
+            try:
+                self.after_cancel(self.auto_refresh_after_id)
+            except tk.TclError:
+                pass
+            self.auto_refresh_after_id = None
+
+        seconds = AUTO_REFRESH_OPTIONS.get(self.auto_refresh_var.get(), 0)
+        if seconds:
+            self.auto_refresh_after_id = self.after(
+                seconds * 1000,
+                self._auto_refresh_tick,
+            )
+
+    def _auto_refresh_tick(self) -> None:
+        self.auto_refresh_after_id = None
+        if not self.pending:
+            self.refresh_all()
+        self._schedule_auto_refresh()
+
+    def toggle_theme(self) -> None:
+        self.theme_mode = "light" if self.theme_mode == "dark" else "dark"
+        self._apply_theme()
+
+    # ----------------------------
+    # Shutdown
+    # ----------------------------
+
+    def _on_close(self) -> None:
+        if self.auto_refresh_after_id is not None:
+            try:
+                self.after_cancel(self.auto_refresh_after_id)
+            except tk.TclError:
+                pass
+
+        try:
+            self.executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            self.executor.shutdown(wait=False)
+
+        self.destroy()
+
+
+def main() -> None:
+    app = NetScopeApp()
+    app.mainloop()
+
+
+if __name__ == "__main__":
+    main()
