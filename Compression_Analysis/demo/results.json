@@ -1,0 +1,63 @@
+{
+  "tool": "Image Fidelity Lab",
+  "version": "1.0.0",
+  "psnr_infinite_encoded_as_null": true,
+  "results": [
+    {
+      "reference": "image_fidelity_lab_demo/original.png",
+      "candidate": "image_fidelity_lab_demo/compressed.jpg",
+      "reference_file_bytes": 67507,
+      "candidate_file_bytes": 6290,
+      "candidate_size_percent_of_reference": 9.317552253840342,
+      "storage_saving_percent": 90.68244774615965,
+      "reference_bit_depth": 8,
+      "candidate_bit_depth": 8,
+      "reference_channels": 3,
+      "candidate_channels": 3,
+      "alpha_mode": "composite",
+      "background": "white",
+      "alignment": null,
+      "processing_notes": [],
+      "metrics": {
+        "width": 384,
+        "height": 288,
+        "valid_pixels": 110592,
+        "valid_fraction": 1.0,
+        "identical_in_valid_area": false,
+        "rgb_mse_normalized": 0.0015663536154304244,
+        "rgb_mse_8bit_equivalent": 101.85214384336335,
+        "rgb_rmse_normalized": 0.03957718554205724,
+        "rgb_mae_normalized": 0.017585192932005504,
+        "rgb_mae_8bit_equivalent": 4.484224197661403,
+        "max_absolute_error_8bit_equivalent": 130.99999979138374,
+        "rgb_psnr_db": 28.051101861518163,
+        "luma_psnr_db": 40.54280909372679,
+        "rgb_ssim": 0.888610009726313,
+        "luma_ssim": 0.9775146018176697,
+        "luma_ms_ssim_5_scale": 0.9970935418721548,
+        "mean_delta_e_76": 4.483899476651954,
+        "p95_delta_e_76": 19.49443111889353,
+        "luma_gradient_magnitude_mae": 0.0053627947345376015,
+        "changed_pixel_percent": 99.6925636574074,
+        "changed_pixel_tolerance_8bit": 0.0,
+        "channel_psnr_db": {
+          "R": 27.139516002670728,
+          "G": 33.196552049373715,
+          "B": 26.40569231035859
+        },
+        "channel_ssim": {
+          "R": 0.8613909149020604,
+          "G": 0.9127917160086212,
+          "B": 0.8916473982682572
+        }
+      },
+      "visualizations": {
+        "directory": "image_fidelity_lab_demo/reports/visuals/original.png",
+        "error_heatmap_scale_normalized": 0.18300652503967285,
+        "heatmap_scale": "99.5th percentile of mean RGB absolute error",
+        "difference_magnification": 4
+      }
+    }
+  ],
+  "errors": []
+}
