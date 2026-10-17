@@ -1,1100 +1,715 @@
-#importing all modules
-from tkinter import *
-from functools import partial
-import tkinter.messagebox
-import backend
-backend.connect_database()
+"""Bank Manager modern Tkinter interface. Run: python frontend.py [--db PATH]"""
+from __future__ import annotations
 
-#A function for check that acc_no is integer or not
-def check_string_in_account_no(check_acc_no):
-    r=check_acc_no.isdigit()
-    return r
+import argparse
+import sqlite3
+import tkinter as tk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+from typing import Any, Callable
+
+from backend import (AccessDenied, BankDB, BankError, Session, export_csv,
+                     pounds)
+
+BG = "#0c1425"
+PANEL = "#14223a"
+PANEL2 = "#1b2d48"
+EDGE = "#30445f"
+FG = "#f1f5fc"
+MUTED = "#a6bad2"
+PRIMARY = "#58a6ff"
+GOOD = "#46d6a0"
+WARN = "#ff8b8b"
+FONT = "Segoe UI"
 
 
-#all buttons of page2
-def create():
-    def create_customer_in_database():
-        def delete_create():
-            create_employee_frame.grid_forget()
-            page2()
-        name = entry5.get()
-        age = entry6.get()
-        address = entry7.get()
-        balance = entry8.get()
-        acc_type = entry9.get()
-        mobile_number = entry10.get()
-        if len(name) != 0 and len(age) != 0 and len(address) != 0 and len(balance) != 0 and len(acc_type) != 0 and len(
-                mobile_number) != 0:
+class FormDialog(tk.Toplevel):
+    """Simple modal data-entry form with field-level show-password handling."""
+    def __init__(self, parent: tk.Tk, title: str,
+                 fields: list[tuple[str, str, str, bool]],
+                 on_save: Callable[[dict[str, str]], None],
+                 description: str = ""):
+        super().__init__(parent)
+        self.title(title)
+        self.configure(bg=PANEL)
+        self.resizable(False, False)
+        self.transient(parent)
+        self.on_save = on_save
+        self.vars: dict[str, tk.StringVar] = {}
+        inner = ttk.Frame(self, padding=24)
+        inner.pack(fill="both", expand=True)
+        ttk.Label(inner, text=title, style="Title.TLabel").pack(anchor="w", pady=(0, 10))
+        if description:
+            ttk.Label(inner, text=description, style="Muted.TLabel", wraplength=430).pack(anchor="w", pady=(0, 12))
+        first: ttk.Entry | None = None
+        for key, label, initial, hidden in fields:
+            ttk.Label(inner, text=label).pack(anchor="w", pady=(9, 4))
+            var = tk.StringVar(value=initial)
+            self.vars[key] = var
+            inp = ttk.Entry(inner, textvariable=var, width=55, show="•" if hidden else "")
+            inp.pack(fill="x")
+            if first is None:
+                first = inp
+        controls = ttk.Frame(inner)
+        controls.pack(fill="x", pady=(22, 0))
+        ttk.Button(controls, text="Cancel", command=self.destroy).pack(side="right", padx=(9, 0))
+        ttk.Button(controls, text="Save", style="Accent.TButton", command=self._submit).pack(side="right")
+        self.bind("<Return>", lambda _event: self._submit())
+        self.bind("<Escape>", lambda _event: self.destroy())
+        self.grab_set()
+        if first:
+            first.focus_set()
+        self.update_idletasks()
+        self.geometry(f"+{max(0, parent.winfo_rootx() + 90)}+{max(0, parent.winfo_rooty() + 60)}")
 
-            acc_no = backend.create_customer(name, age, address, balance, acc_type, mobile_number)
-
-            label = Label(create_employee_frame, text='Your account number is {}'.format(acc_no))
-            label.grid(row=14)
-
-            button = Button(create_employee_frame, text="Exit", command=delete_create)
-            button.grid(row=15)
+    def _submit(self) -> None:
+        try:
+            self.on_save({k: v.get() for k, v in self.vars.items()})
+        except (BankError, sqlite3.Error, ValueError) as exc:
+            messagebox.showerror("Unable to save", str(exc), parent=self)
         else:
-            label = Label(create_employee_frame, text='Please fill all entries')
-            label.grid(row=14)
+            if self.winfo_exists():
+                self.destroy()
 
-            button = Button(create_employee_frame, text="Exit", command=delete_create)
-            button.grid(row=15)
-    frame1.grid_forget()
-    global create_employee_frame
-    create_employee_frame=Frame(tk,bg='black')
-    create_employee_frame.grid(padx=500,pady=150)
 
-    label=Label(create_employee_frame,text='Customer Detail',font='bold')
-    label.grid(row=0,pady=4)
-    label = Label(create_employee_frame, text='Name', font='bold')
-    label.grid(row=1,pady=4)
-    global entry5
-    entry5=Entry(create_employee_frame)
-    entry5.grid(row=2,pady=4)
-    label = Label(create_employee_frame, text='Age', font='bold')
-    label.grid(row=3,pady=4)
-    global entry6
-    entry6=Entry(create_employee_frame)
-    entry6.grid(row=4,pady=4)
-    label = Label(create_employee_frame, text='address', font='bold')
-    label.grid(row=5,pady=4)
-    global entry7
-    entry7=Entry(create_employee_frame)
-    entry7.grid(row=6,pady=4)
-    label = Label(create_employee_frame, text='Balance', font='bold')
-    label.grid(row=7,pady=4)
-    global entry8
-    entry8=Entry(create_employee_frame)
-    entry8.grid(row=8,pady=4)
-    label = Label(create_employee_frame, text='Account Type', font='bold')
-    label.grid(row=9,pady=4)
-    label = Label(create_employee_frame, text='Mobile number', font='bold')
-    label.grid(row=11,pady=4)
-    global entry9
-    entry9 = Entry(create_employee_frame)
-    entry9.grid(row=10,pady=4)
-    global entry10
-    entry10 = Entry(create_employee_frame)
-    entry10.grid(row=12,pady=4)
-    button=Button(create_employee_frame,text='Submit',command=create_customer_in_database)
-    button.grid(row=13,pady=4)
+class BankApp:
+    def __init__(self, database: BankDB):
+        self.db = database
+        self.root = tk.Tk()
+        self.root.title("Bank Manager | Desktop")
+        self.root.geometry("1280x820")
+        self.root.minsize(1030, 660)
+        self.root.configure(bg=BG)
+        self.session: Session | None = None
+        self.current_page = ""
+        self._style()
+        self.root.protocol("WM_DELETE_WINDOW", self.exit)
+        self.show_login()
 
-    mainloop()
+    def _style(self) -> None:
+        sty = ttk.Style(self.root)
+        sty.theme_use("clam")
+        sty.configure("TFrame", background=PANEL)
+        sty.configure("App.TFrame", background=BG)
+        sty.configure("Side.TFrame", background=PANEL)
+        sty.configure("TLabel", background=PANEL, foreground=FG, font=(FONT, 10))
+        sty.configure("Title.TLabel", background=PANEL, foreground=FG, font=(FONT, 19, "bold"))
+        sty.configure("Muted.TLabel", background=PANEL, foreground=MUTED, font=(FONT, 10))
+        sty.configure("Big.TLabel", background=PANEL, foreground=FG, font=(FONT, 24, "bold"))
+        sty.configure("Header.TLabel", background=BG, foreground=FG, font=(FONT, 22, "bold"))
+        sty.configure("HeaderSub.TLabel", background=BG, foreground=MUTED, font=(FONT, 10))
+        sty.configure("TEntry", fieldbackground=PANEL2, foreground=FG, insertcolor=FG, bordercolor=EDGE,
+                      padding=(9, 8))
+        sty.configure("TCombobox", fieldbackground=PANEL2, foreground=FG, background=PANEL2,
+                      arrowcolor=FG, padding=(9, 7))
+        sty.configure("TButton", font=(FONT, 10, "bold"), padding=(14, 10),
+                      background=PANEL2, foreground=FG, bordercolor=EDGE)
+        sty.map("TButton", background=[("active", EDGE)], foreground=[("disabled", MUTED)])
+        sty.configure("Accent.TButton", background=PRIMARY, foreground="#07162a", bordercolor=PRIMARY)
+        sty.map("Accent.TButton", background=[("active", "#8bc1ff")])
+        sty.configure("Danger.TButton", background="#793247", foreground=FG, bordercolor="#793247")
+        sty.map("Danger.TButton", background=[("active", "#a3435c")])
+        sty.configure("TCheckbutton", background=PANEL, foreground=FG)
+        sty.configure("Treeview", background=PANEL, foreground=FG, fieldbackground=PANEL,
+                      rowheight=33, borderwidth=0, font=(FONT, 10))
+        sty.configure("Treeview.Heading", background=PANEL2, foreground=FG, padding=(10, 9),
+                      font=(FONT, 10, "bold"))
+        sty.map("Treeview", background=[("selected", "#24507b")], foreground=[("selected", FG)])
+        sty.map("Treeview.Heading", background=[("active", EDGE)])
+        sty.configure("Vertical.TScrollbar", background=PANEL2, troughcolor=PANEL)
+        sty.configure("Horizontal.TScrollbar", background=PANEL2, troughcolor=PANEL)
 
-def search_acc():
-    frame1.grid_forget()
-    global search_frame
-    search_frame=Frame(tk)
-    search_frame.grid(padx=500,pady=300)
+    def _clear(self) -> None:
+        for child in self.root.winfo_children():
+            child.destroy()
 
-    label=Label(search_frame,text="Enter account number",font='bold')
-    label.grid(row=0,pady=6)
+    def _call(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except (BankError, sqlite3.Error, ValueError) as exc:
+            messagebox.showerror("Action not completed", str(exc), parent=self.root)
+            return None
 
-    global entry11
-    entry11=Entry(search_frame)
-    entry11.grid(row=1,pady=6)
+    def _auth_panel(self, title: str, subtitle: str) -> ttk.Frame:
+        self._clear()
+        outer = ttk.Frame(self.root, style="App.TFrame")
+        outer.pack(fill="both", expand=True)
+        frame = ttk.Frame(outer, padding=42)
+        frame.place(relx=.5, rely=.48, anchor="center", width=500)
+        ttk.Label(frame, text=title, style="Title.TLabel").pack(anchor="w", pady=(0, 10))
+        ttk.Label(frame, text=subtitle, style="Muted.TLabel", wraplength=400).pack(anchor="w", pady=(0, 28))
+        return frame
 
-    button=Button(search_frame,text="Search",command=show)
-    button.grid(row=3)
+    def show_login(self) -> None:
+        self.session = None
+        if self.db.needs_admin_setup():
+            self.show_setup()
+            return
+        frame = self._auth_panel("BANK MANAGER", "Secure, local-only educational banking dashboard")
+        ttk.Label(frame, text="Username").pack(anchor="w", pady=(0, 6))
+        username = tk.StringVar()
+        inp = ttk.Entry(frame, textvariable=username)
+        inp.pack(fill="x", pady=(0, 17))
+        ttk.Label(frame, text="Password").pack(anchor="w", pady=(0, 6))
+        password = tk.StringVar()
+        pw = ttk.Entry(frame, textvariable=password, show="•")
+        pw.pack(fill="x", pady=(0, 24))
 
-    mainloop()
-
-def show():
-    def clear_show_frame():
-        show_frame.grid_forget()
-        page2()
-    def back_page2():
-        search_frame.grid_forget()
-        page2()
-
-    acc_no=entry11.get()
-    r=check_string_in_account_no(acc_no)
-    if len(acc_no)!=0 and r:
-        details=backend.get_details(acc_no)
-        if details!=False:
-            search_frame.grid_forget()
-            global show_frame
-            show_frame=Frame(tk)
-            show_frame.grid(padx=400,pady=200)
-
-            label=Label(show_frame,text="Account_number:\t{}".format(details[0]),font='bold')
-            label.grid(row=0,pady=6)
-            label = Label(show_frame, text="Name:\t{}".format(details[1]),font='bold')
-            label.grid(row=1,pady=6)
-            label = Label(show_frame, text="Age:\t{}".format(details[2]),font='bold')
-            label.grid(row=2,pady=6)
-            label = Label(show_frame, text="Address:\t{}".format(details[3]),font='bold')
-            label.grid(row=3,pady=6)
-            label = Label(show_frame, text="Balance:\t{}".format(details[4]),font='bold')
-            label.grid(row=4,pady=6)
-            label = Label(show_frame, text="Account_type:\t{}".format(details[5]),font='bold')
-            label.grid(row=5,pady=6)
-            label = Label(show_frame, text="Mobile Number:\t{}".format(details[6]),font='bold')
-            label.grid(row=6,pady=6)
-            button=Button(show_frame,text='Exit',command=clear_show_frame,width=20,height=2,bg='red',fg='white')
-            button.grid(row=7,pady=6)
-            mainloop()
-        else:
-            label=Label(search_frame,text="Account Not Found")
-            label.grid()
-            button=Button(search_frame,text='Exit',command=back_page2)
-            button.grid()
-
-    else:
-        label = Label(search_frame, text="Enter correct account number")
-        label.grid()
-        button = Button(search_frame, text='Exit', command=back_page2)
-        button.grid()
-
-def add():
-    frame1.grid_forget()
-    def search_in_database():
-        def back_page2():
-            search_frame.grid_forget()
-            page2()
-        global result
-        global acc_no
-        acc_no = entry11.get()
-        r=check_string_in_account_no(acc_no)
-        if len(acc_no)!=0 and r:
-            result = backend.check_acc_no(acc_no)
-            print(result)
-            if not result:
-                label = Label(search_frame, text="invalid account number")
-                label.grid(pady=2)
-                button=Button(search_frame, text="Exit",command=back_page2)
-                button.grid()
-                mainloop()
-            else:
-                def update_money():
-                    new_money=entry12.get()
-                    backend.update_balance(new_money,acc_no)
-                    add_frame.grid_forget()
-                    page2()
-
-                search_frame.grid_forget()
-                global add_frame
-                add_frame=Frame(tk)
-                add_frame.grid(padx=400,pady=300)
-
-                detail = backend.get_detail(acc_no)
-
-                label = Label(add_frame, text='Account holder name:   {}'.format(detail[0][0]))
-                label.grid(row=0, pady=3)
-
-                label = Label(add_frame, text='Current amount:   {}'.format(detail[0][1]))
-                label.grid(row=1, pady=3)
-
-                label=Label(add_frame,text='Enter Money')
-                label.grid(row=2,pady=3)
-                global entry12
-                entry12=Entry(add_frame)
-                entry12.grid(row=3,pady=3)
-
-                button=Button(add_frame,text='Add',command=update_money)
-                button.grid(row=4)
-
-                mainloop()
-        else:
-            label = Label(search_frame, text="Enter correct account number")
-            label.grid(pady=2)
-            button = Button(search_frame, text="Exit", command=back_page2)
-            button.grid()
-            mainloop()
-    def search_acc():
-        global search_frame
-        search_frame = Frame(tk)
-        search_frame.grid(padx=500, pady=300)
-
-        label = Label(search_frame, text="Enter account number", font='bold')
-        label.grid(row=0, pady=6)
-
-        global entry11
-        entry11 = Entry(search_frame)
-        entry11.grid(row=1, pady=6)
-
-        button = Button(search_frame, text="Search", command=search_in_database)
-        button.grid(row=3)
-
-        mainloop()
-    search_acc()
-
-def withdraw():
-    frame1.grid_forget()
-
-    def search_in_database():
-        def go_page2():
-            search_frame.grid_forget()
-            page2()
-
-        global result
-        global acc_no
-        acc_no = entry11.get()
-        r=check_string_in_account_no(acc_no)
-        if len(acc_no)!=0 and r:
-            result = backend.check_acc_no(acc_no)
-            print(result)
-            if not result:
-                label = Label(search_frame, text="invalid account number")
-                label.grid(pady=2)
-                button = Button(search_frame, text="Exit", command=go_page2)
-                button.grid()
-                mainloop()
-            else:
-                def deduct_money():
-                    new_money = entry12.get()
-                    result=backend.deduct_balance(new_money, acc_no)
-                    if result:
-                        add_frame.grid_forget()
-                        page2()
-                    else:
-                        label=Label(search_frame,text="Insufficient Balance")
-                        label.grid(row=4)
-
-                        button=Button(search_frame,text='Exit',command=go_page2)
-                        button.grid(row=5)
-
-                        mainloop()
-                search_frame.grid_forget()
-                global add_frame
-                add_frame = Frame(tk)
-                add_frame.grid(padx=400, pady=300)
-                detail=backend.get_detail(acc_no)
-
-                label=Label(add_frame,text='Account holder name:   {}'.format(detail[0][0]))
-                label.grid(row=0,pady=3)
-
-                label = Label(add_frame, text='Current amount:   {}'.format(detail[0][1]))
-                label.grid(row=1, pady=3)
-
-                label = Label(add_frame, text='Enter Money')
-                label.grid(row=2, pady=3)
-                global entry12
-                entry12 = Entry(add_frame)
-                entry12.grid(row=3, pady=3)
-
-                button = Button(add_frame, text='Withdraw', command=deduct_money)
-                button.grid(row=4)
-
-                mainloop()
-        else:
-            label = Label(search_frame, text="Enter correct account number")
-            label.grid(row=4)
-
-            button = Button(search_frame, text='Exit', command=go_page2)
-            button.grid(row=5)
-
-            mainloop()
-    def search_acc():
-        global search_frame
-        search_frame = Frame(tk)
-        search_frame.grid(padx=500, pady=300)
-
-        label = Label(search_frame, text="Enter account number", font='bold')
-        label.grid(row=0, pady=6)
-
-        global entry11
-        entry11 = Entry(search_frame)
-        entry11.grid(row=1, pady=6)
-
-        button = Button(search_frame, text="Search", command=search_in_database)
-        button.grid(row=3)
-
-        mainloop()
-
-    search_acc()
-
-def check():
-    frame1.grid_forget()
-
-    def search_in_database():
-        def back_page2():
-            search_frame.grid_forget()
-            page2()
-        global result
-        global acc_no
-        acc_no = entry11.get()
-        r=check_string_in_account_no(acc_no)
-
-        if len(acc_no)!=0 and r:
-            result = backend.check_acc_no(acc_no)
-            print(result)
-            if not result:
-                label = Label(search_frame, text="invalid account number")
-                label.grid(pady=2)
-                button = Button(search_frame, text="Exit", command=back_page2)
-                button.grid()
-                mainloop()
-            else:
-                def delete_check_frame():
-                    check_frame.grid_forget()
-                    page2()
-                search_frame.grid_forget()
-                balance=backend.check_balance(acc_no)
-                global check_frame
-                check_frame=Frame(tk)
-                check_frame.grid(padx=500,pady=300)
-
-                label=Label(check_frame,text='Balance Is:{}'.format(balance),font='bold')
-                label.grid(row=0,pady=4)
-
-                button=Button(check_frame,text='Back',command=delete_check_frame,width=20,height=2,bg='red')
-                button.grid(row=1)
-
-                mainloop()
-        else:
-            label = Label(search_frame, text="Enter correct entry")
-            label.grid(pady=2)
-            button = Button(search_frame, text="Exit", command=back_page2)
-            button.grid()
-            mainloop()
-
-    def search_acc():
-        global search_frame
-        search_frame = Frame(tk)
-        search_frame.grid(padx=500, pady=300)
-
-        label = Label(search_frame, text="Enter account number", font='bold')
-        label.grid(row=0, pady=6)
-
-        global entry11
-
-        entry11 = Entry(search_frame)
-        entry11.grid(row=1, pady=6)
-
-        button = Button(search_frame, text="Search", command=search_in_database)
-        button.grid(row=3)
-
-        mainloop()
-
-    search_acc()
-
-def update():
-    def back_to_page2():
-        search_frame.grid_forget()
-        page2()
-    def show_all_updateble_content():
-        def back_to_page2_from_update():
-            update_customer_frame.grid_forget()
-            page2()
-        #defining a function whose makes a update entry and submit butoon side to name button
-        def update_name():
-            #def a function eho updates name in database
-            def update_name_in_database():
-                new_name=entry_name.get()
-                r=check_string_in_account_no(new_name)
-                if len(new_name)!=0:
-                    #function in backend that updates name in table
-                    backend.update_name_in_bank_table(new_name,acc_no)
-                    entry_name.destroy()
-                    submit_button.destroy()
-                    name_label.destroy()
+        def login() -> None:
+            session = self._call(self.db.authenticate, username.get(), password.get())
+            password.set("")
+            if isinstance(session, Session):
+                self.session = session
+                if session.must_change_password:
+                    self.show_password_change(required=True)
                 else:
-                    tkinter.messagebox.showinfo('Error','Please fill blanks')
-                    entry_name.destroy()
-                    submit_button.destroy()
-                    name_label.destroy()
-            global entry_name
-            global name_label
-            name_label=Label(update_customer_frame,text='Enter new name')
-            name_label.grid(row=1,column=1)
-            entry_name=Entry(update_customer_frame)
-            entry_name.grid(row=1,column=2,padx=2)
-            global submit_button
-            submit_button=Button(update_customer_frame,text='Update',command=update_name_in_database)
-            submit_button.grid(row=1,column=3)
-        #defing a function who make gui fro age
-        def update_age():
-            # def a function eho updates name in database
-            def update_age_in_database():
-                new_age = entry_name.get()
-                r=check_string_in_account_no(new_age)
-                if len(new_age)!=0 and r:
-                    # function in backend that updates name in table
-                    backend.update_age_in_bank_table(new_age, acc_no)
-                    entry_name.destroy()
-                    submit_button.destroy()
-                    age_label.destroy()
-                else:
-                    tkinter.messagebox.showinfo('Error','Please enter age')
-                    entry_name.destroy()
-                    submit_button.destroy()
-                    age_label.destroy()
-            global age_label
-            age_label = Label(update_customer_frame, text='Enter new Age:')
-            age_label.grid(row=2, column=1)
-            global entry_name
-            entry_name = Entry(update_customer_frame)
-            entry_name.grid(row=2, column=2, padx=2)
-            global submit_button
-            submit_button = Button(update_customer_frame, text='Update', command=update_age_in_database)
-            submit_button.grid(row=2, column=3)
+                    self.navigate("Dashboard")
 
-        # defing a function who make gui fro age
-        def update_address():
-            # def a function eho updates name in database
-            def update_address_in_database():
-                new_address = entry_name.get()
-                if len(new_address)!=0:
-                    # function in backend that updates name in table
-                    backend.update_address_in_bank_table(new_address, acc_no)
-                    entry_name.destroy()
-                    submit_button.destroy()
-                    address_label.destroy()
-                else:
-                    tkinter.messagebox.showinfo('Error','Please fill address')
-                    entry_name.destroy()
-                    submit_button.destroy()
-                    address_label.destroy()
-            global address_label
+        ttk.Button(frame, text="Sign in", style="Accent.TButton", command=login).pack(fill="x")
+        ttk.Label(frame, text="Offline SQLite demo · No online banking connection", style="Muted.TLabel").pack(anchor="w", pady=(24, 0))
+        pw.bind("<Return>", lambda _e: login())
+        inp.focus_set()
 
-            address_label = Label(update_customer_frame, text='Enter new Address:')
-            address_label.grid(row=3, column=1)
-            global entry_name
-            entry_name = Entry(update_customer_frame)
-            entry_name.grid(row=3, column=2, padx=2)
-            global submit_button
-            submit_button = Button(update_customer_frame, text='Update', command=update_address_in_database)
-            submit_button.grid(row=3, column=3)
+    def show_setup(self) -> None:
+        frame = self._auth_panel("FIRST-RUN SETUP", "Create an administrator. No default administrator password is installed.")
+        vars_: dict[str, tk.StringVar] = {}
+        for key, label, hidden in (("username", "Administrator username", False),
+                                   ("password", "Password (at least 12 characters)", True),
+                                   ("confirm", "Confirm password", True)):
+            ttk.Label(frame, text=label).pack(anchor="w", pady=(11, 6))
+            var = tk.StringVar()
+            vars_[key] = var
+            ttk.Entry(frame, textvariable=var, show="•" if hidden else "").pack(fill="x")
 
-        acc_no=entry_acc.get()
+        def save() -> None:
+            if vars_["password"].get() != vars_["confirm"].get():
+                messagebox.showerror("Passwords differ", "The passwords must match.", parent=self.root)
+                return
+            if self._call(self.db.create_initial_admin, vars_["username"].get(), vars_["password"].get()) is None:
+                # A successful create method returns None too: inspect DB state.
+                if self.db.needs_admin_setup():
+                    return
+            messagebox.showinfo("Administrator created", "You can now sign in.", parent=self.root)
+            self.show_login()
 
-        r=check_string_in_account_no(acc_no)
-        if r:
-            result = backend.check_acc_no(acc_no)
-            if result:
-                search_frame.grid_forget()
-                global update_customer_frame
-                update_customer_frame=Frame(tk)
-                update_customer_frame.grid(padx=300,pady=300)
+        ttk.Button(frame, text="Create administrator", style="Accent.TButton", command=save).pack(fill="x", pady=(24, 0))
 
-                label=Label(update_customer_frame,text='What do you want to update')
-                label.grid(row=0)
+    def show_password_change(self, required: bool = False) -> None:
+        assert self.session
+        session = self.session
+        if required:
+            frame = self._auth_panel("PASSWORD UPDATE REQUIRED", "Your migrated or temporary password must be replaced before you can access the dashboard.")
+        else:
+            self._layout("Settings")
+            frame = ttk.Frame(self.content, padding=22)
+            frame.pack(anchor="nw", fill="x", pady=12)
+            ttk.Label(frame, text="Change your password", style="Title.TLabel").pack(anchor="w", pady=(0, 8))
+        values: dict[str, tk.StringVar] = {}
+        for key, label in (("old", "Current password"), ("new", "New password (12+ characters)"),
+                           ("confirm", "Confirm new password")):
+            ttk.Label(frame, text=label).pack(anchor="w", pady=(12, 5))
+            v = tk.StringVar()
+            values[key] = v
+            ttk.Entry(frame, textvariable=v, show="•", width=48).pack(anchor="w", fill="x")
 
-                name_button=Button(update_customer_frame,text='Name',command=update_name)
-                name_button.grid(row=1,column=0,pady=6)
+        def change() -> None:
+            if values["new"].get() != values["confirm"].get():
+                messagebox.showerror("Password mismatch", "New passwords do not match.", parent=self.root)
+                return
+            changed = self._call(self.db.change_own_password, session, values["old"].get(), values["new"].get())
+            if isinstance(changed, Session):
+                self.session = changed
+                messagebox.showinfo("Updated", "Password changed successfully.", parent=self.root)
+                self.navigate("Dashboard" if required else "Settings")
 
-                age_button=Button(update_customer_frame,text='Age',command=update_age)
-                age_button.grid(row=2,column=0,pady=6)
+        ttk.Button(frame, text="Update password", style="Accent.TButton", command=change).pack(anchor="w", pady=(22, 0))
+        if required:
+            ttk.Button(frame, text="Sign out", command=self.show_login).pack(anchor="w", pady=(12, 0))
 
-                address_button=Button(update_customer_frame,text='Address',command=update_address)
-                address_button.grid(row=3,column=0,pady=6)
+    def _layout(self, page: str) -> None:
+        assert self.session is not None
+        self._clear()
+        layout = ttk.Frame(self.root, style="App.TFrame")
+        layout.pack(fill="both", expand=True)
+        side = ttk.Frame(layout, style="Side.TFrame", padding=(18, 26))
+        side.pack(side="left", fill="y")
+        ttk.Label(side, text="BANK MANAGER", style="Title.TLabel").pack(anchor="w", pady=(2, 7))
+        ttk.Label(side, text=f"{self.session.username}  ·  {self.session.role.title()}",
+                  style="Muted.TLabel").pack(anchor="w", pady=(0, 26))
+        pages = ["Dashboard", "Accounts", "Money", "Transfers", "History"]
+        if self.session.role == "admin":
+            pages += ["Employees", "Audit log"]
+        pages += ["Settings"]
+        for label in pages:
+            ttk.Button(side, text=label, style="Accent.TButton" if label == page else "TButton",
+                       command=lambda p=label: self.navigate(p)).pack(fill="x", pady=4)
+        ttk.Separator(side).pack(fill="x", pady=(24, 15))
+        ttk.Button(side, text="Sign out", command=self.show_login).pack(fill="x", pady=4)
+        ttk.Button(side, text="Exit", command=self.exit).pack(fill="x", pady=4)
+        right = ttk.Frame(layout, style="App.TFrame", padding=(26, 24))
+        right.pack(side="left", fill="both", expand=True)
+        ttk.Label(right, text=page, style="Header.TLabel").pack(anchor="w", pady=(0, 4))
+        ttk.Label(right, text="Offline account management · GBP demonstration balances",
+                  style="HeaderSub.TLabel").pack(anchor="w", pady=(0, 18))
+        self.content = ttk.Frame(right, style="App.TFrame")
+        self.content.pack(fill="both", expand=True)
+        self.current_page = page
 
-                exit_button=Button(update_customer_frame,text='Exit',command=back_to_page2_from_update)
-                exit_button.grid(row=4)
-                mainloop()
+    def navigate(self, page: str) -> None:
+        self._layout(page)
+        views = {
+            "Dashboard": self.show_dashboard, "Accounts": self.show_accounts,
+            "Money": self.show_money, "Transfers": self.show_transfers,
+            "History": self.show_history, "Employees": self.show_employees,
+            "Audit log": self.show_audit, "Settings": self.show_settings,
+        }
+        self._call(views[page])
+
+    def _section(self, parent: ttk.Frame | None = None, padding: int = 20) -> ttk.Frame:
+        wrapper = ttk.Frame(parent or self.content, padding=padding)
+        wrapper.pack(fill="both", expand=True, pady=(0, 10))
+        return wrapper
+
+    def _buttons(self, parent: ttk.Frame, specs: list[tuple[str, Callable[[], None], str]]) -> ttk.Frame:
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=(0, 16))
+        for label, command, style in specs:
+            ttk.Button(row, text=label, command=command, style=style).pack(side="left", padx=(0, 8))
+        return row
+
+    def _tree(self, parent: ttk.Frame, columns: list[tuple[str, str, int]], height: int = 15) -> ttk.Treeview:
+        holder = ttk.Frame(parent)
+        holder.pack(fill="both", expand=True)
+        keys = [x[0] for x in columns]
+        tree = ttk.Treeview(holder, columns=keys, show="headings", selectmode="browse", height=height)
+        for key, label, width in columns:
+            tree.heading(key, text=label, command=lambda c=key: self._sort_tree(tree, c, False))
+            tree.column(key, width=width, minwidth=60, stretch=True, anchor="w")
+        scrolly = ttk.Scrollbar(holder, orient="vertical", command=tree.yview)
+        scrollx = ttk.Scrollbar(holder, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=scrolly.set, xscrollcommand=scrollx.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        scrolly.grid(row=0, column=1, sticky="ns")
+        scrollx.grid(row=1, column=0, sticky="ew")
+        holder.columnconfigure(0, weight=1)
+        holder.rowconfigure(0, weight=1)
+        return tree
+
+    def _sort_tree(self, tree: ttk.Treeview, key: str, reverse: bool) -> None:
+        values = [(tree.set(i, key), i) for i in tree.get_children("")]
+        def sortable(item: tuple[str, str]):
+            raw = item[0].replace("£", "").replace(",", "").strip()
+            try:
+                return (0, float(raw))
+            except ValueError:
+                return (1, item[0].casefold())
+        for idx, (_, iid) in enumerate(sorted(values, key=sortable, reverse=reverse)):
+            tree.move(iid, "", idx)
+        tree.heading(key, command=lambda: self._sort_tree(tree, key, not reverse))
+
+    def show_dashboard(self) -> None:
+        assert self.session
+        summary = self.db.dashboard(self.session)
+        row = ttk.Frame(self.content, style="App.TFrame")
+        row.pack(fill="x", pady=(0, 16))
+        for title, value in (("Total balances", pounds(summary["money"])),
+                             ("Active accounts", str(summary["active"])),
+                             ("All accounts", str(summary["total"])),
+                             ("Ledger entries", str(summary["transactions"]))):
+            card = ttk.Frame(row, padding=20)
+            card.pack(side="left", fill="x", expand=True, padx=(0, 12))
+            ttk.Label(card, text=title, style="Muted.TLabel").pack(anchor="w")
+            ttk.Label(card, text=value, style="Big.TLabel").pack(anchor="w", pady=(12, 0))
+        panel = self._section()
+        ttk.Label(panel, text="Quick actions", style="Title.TLabel").pack(anchor="w", pady=(0, 14))
+        self._buttons(panel, [("New account", self.new_account, "Accent.TButton"),
+                              ("Deposit / withdraw", lambda: self.navigate("Money"), "TButton"),
+                              ("Transfer funds", lambda: self.navigate("Transfers"), "TButton"),
+                              ("View account directory", lambda: self.navigate("Accounts"), "TButton")])
+        ttk.Label(panel, text="Recent account activity", style="Muted.TLabel").pack(anchor="w", pady=(16, 9))
+        tree = self._tree(panel, [("time", "UTC time", 180), ("account", "Account", 90),
+                                  ("type", "Type", 150), ("amount", "Amount", 140),
+                                  ("balance", "New balance", 145)], height=12)
+        for r in self.db.transactions(self.session, limit=25):
+            tree.insert("", "end", values=(r["created_at"][:19].replace("T", " "), r["account_no"],
+                                             r["kind"].replace("_", " ").title(), pounds(r["amount_pence"]),
+                                             pounds(r["balance_after_pence"])))
+
+    def _selected(self, tree: ttk.Treeview) -> int | None:
+        selected = tree.selection()
+        if not selected:
+            messagebox.showinfo("Select an entry", "Select a row first.", parent=self.root)
+            return None
+        return int(selected[0])
+
+    def show_accounts(self) -> None:
+        assert self.session
+        panel = self._section()
+        search_bar = ttk.Frame(panel)
+        search_bar.pack(fill="x", pady=(0, 14))
+        ttk.Label(search_bar, text="Find account by number, name, type or phone").pack(side="left", padx=(0, 12))
+        query = tk.StringVar()
+        inp = ttk.Entry(search_bar, textvariable=query, width=26)
+        inp.pack(side="left", padx=(0, 8))
+        closed = tk.BooleanVar(value=False)
+        ttk.Checkbutton(search_bar, text="Show closed", variable=closed).pack(side="left", padx=(6, 12))
+        tree: ttk.Treeview
+
+        def refresh() -> None:
+            for iid in tree.get_children():
+                tree.delete(iid)
+            for r in self.db.list_accounts(self.session, query.get(), closed.get()):
+                tree.insert("", "end", iid=str(r["account_no"]), values=(
+                    r["account_no"], r["full_name"], r["age"], r["account_type"],
+                    pounds(r["balance_pence"]), r["phone"], r["status"]))
+
+        ttk.Button(search_bar, text="Search", command=refresh).pack(side="left")
+        inp.bind("<Return>", lambda _e: refresh())
+        self._buttons(panel, [("Create", self.new_account, "Accent.TButton"),
+                              ("View details", lambda: self._with_account(tree, self.account_details), "TButton"),
+                              ("Edit", lambda: self._with_account(tree, self.edit_account), "TButton"),
+                              ("Close", lambda: self._with_account(tree, self.close_account), "Danger.TButton"),
+                              ("Reopen", lambda: self._with_account(tree, self.reopen_account), "TButton")
+                              ] if self.session.role == "admin" else
+                      [("Create", self.new_account, "Accent.TButton"),
+                       ("View details", lambda: self._with_account(tree, self.account_details), "TButton"),
+                       ("Edit", lambda: self._with_account(tree, self.edit_account), "TButton"),
+                       ("Close", lambda: self._with_account(tree, self.close_account), "Danger.TButton")])
+        tree = self._tree(panel, [("number", "Account #", 95), ("name", "Name", 170),
+                                  ("age", "Age", 60), ("type", "Type", 110),
+                                  ("balance", "Balance", 150), ("phone", "Phone", 135),
+                                  ("status", "Status", 85)])
+        tree.bind("<Double-1>", lambda _e: self._with_account(tree, self.account_details))
+        if self.session.role == "admin":
+            ttk.Button(panel, text="Export visible accounts (CSV)", command=lambda: self._export_accounts(query.get(), closed.get())).pack(anchor="w", pady=(14, 0))
+        refresh()
+
+    def _with_account(self, tree: ttk.Treeview, fn: Callable[[int], None]) -> None:
+        acct = self._selected(tree)
+        if acct is not None:
+            fn(acct)
+
+    def new_account(self) -> None:
+        assert self.session
+        def save(v: dict[str, str]) -> None:
+            num = self.db.create_account(self.session, v["name"], v["age"], v["address"],
+                                         v["balance"], v["type"], v["phone"])
+            messagebox.showinfo("Account created", f"New account number: {num}", parent=self.root)
+            self.navigate("Accounts")
+        FormDialog(self.root, "Create customer account", [
+            ("name", "Full name", "", False), ("age", "Age", "", False),
+            ("address", "Address", "", False), ("balance", "Opening deposit (£)", "0.00", False),
+            ("type", "Account type", "Current", False), ("phone", "Mobile number", "", False)], save)
+
+    def edit_account(self, account_no: int) -> None:
+        assert self.session
+        a = self._call(self.db.get_account, self.session, account_no)
+        if not a:
+            return
+        def save(v: dict[str, str]) -> None:
+            self.db.update_account(self.session, account_no, name=v["name"], age=v["age"],
+                                   address=v["address"], account_type=v["type"], phone=v["phone"])
+            self.navigate("Accounts")
+        FormDialog(self.root, f"Edit account #{account_no}", [
+            ("name", "Full name", a["full_name"], False), ("age", "Age", str(a["age"]), False),
+            ("address", "Address", a["address"], False), ("type", "Account type", a["account_type"], False),
+            ("phone", "Mobile number", a["phone"], False)], save,
+            "Balance changes are recorded via deposits, withdrawals or transfers—not profile edits.")
+
+    def close_account(self, account_no: int) -> None:
+        assert self.session
+        if messagebox.askyesno("Confirm closure", f"Close account #{account_no}? It must have a zero balance.\n\n"
+                                "The account and ledger history are retained for audit.", parent=self.root):
+            try:
+                self.db.close_account(self.session, account_no)
+            except (BankError, sqlite3.Error) as exc:
+                messagebox.showerror("Unable to close account", str(exc), parent=self.root)
             else:
-                label = Label(search_frame, text='Invalid account number')
-                label.grid()
+                self.navigate("Accounts")
 
-                button = Button(search_frame, text='Exit', command=back_to_page2)
-                button.grid()
-
+    def reopen_account(self, account_no: int) -> None:
+        assert self.session
+        try:
+            self.db.reopen_account(self.session, account_no)
+        except (BankError, sqlite3.Error) as exc:
+            messagebox.showerror("Unable to reopen account", str(exc), parent=self.root)
         else:
-            label=Label(search_frame,text='Fill account number')
-            label.grid()
+            self.navigate("Accounts")
 
-            button=Button(search_frame,text='Exit',command=back_to_page2)
-            button.grid()
+    def account_details(self, account_no: int) -> None:
+        assert self.session
+        a = self._call(self.db.get_account, self.session, account_no)
+        if not a:
+            return
+        w = tk.Toplevel(self.root)
+        w.title(f"Account #{account_no}")
+        w.geometry("780x570")
+        w.configure(bg=PANEL)
+        body = ttk.Frame(w, padding=23)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=f"Account #{account_no} · {a['full_name']}", style="Title.TLabel").pack(anchor="w")
+        data = [("Balance", pounds(a["balance_pence"])), ("Status", a["status"]),
+                ("Age", str(a["age"])), ("Address", a["address"]),
+                ("Type", a["account_type"]), ("Phone", a["phone"])]
+        for label, value in data:
+            ttk.Label(body, text=f"{label}:  {value}").pack(anchor="w", pady=4)
+        ttk.Label(body, text="Recent ledger entries", style="Muted.TLabel").pack(anchor="w", pady=(16, 8))
+        tree = self._tree(body, [("created", "UTC", 170), ("kind", "Kind", 155),
+                                 ("amount", "Amount", 110), ("balance", "Balance", 120)])
+        for row in self.db.transactions(self.session, account_no, limit=100):
+            tree.insert("", "end", values=(row["created_at"][:19].replace("T", " "), row["kind"],
+                                             pounds(row["amount_pence"]), pounds(row["balance_after_pence"])))
 
-    frame1.grid_forget()
-    #define gui for enter account number
+    def show_money(self) -> None:
+        assert self.session
+        panel = self._section()
+        ttk.Label(panel, text="Deposit, withdraw or check a balance", style="Title.TLabel").pack(anchor="w", pady=(0, 12))
+        ttk.Label(panel, text="Account number").pack(anchor="w", pady=(10, 5))
+        acct = tk.StringVar()
+        ttk.Entry(panel, textvariable=acct, width=32).pack(anchor="w")
+        ttk.Label(panel, text="Amount in GBP (e.g. 12.50)").pack(anchor="w", pady=(15, 5))
+        amount = tk.StringVar()
+        ttk.Entry(panel, textvariable=amount, width=32).pack(anchor="w")
+        ttk.Label(panel, text="Optional transaction note").pack(anchor="w", pady=(15, 5))
+        note = tk.StringVar()
+        ttk.Entry(panel, textvariable=note, width=65).pack(anchor="w")
+        status = ttk.Label(panel, text="", style="Muted.TLabel")
+        status.pack(anchor="w", pady=(22, 0))
 
-    global search_frame
-    search_frame=Frame(tk)
-    search_frame.grid(padx=500,pady=300)
+        def action(kind: str) -> None:
+            try:
+                account_no = int(acct.get())
+                account = self.db.get_account(self.session, account_no)
+                if kind == "Check":
+                    status.configure(text=f"Account #{account_no} · {account['full_name']} · Balance {pounds(account['balance_pence'])}")
+                    return
+                if not messagebox.askyesno("Confirm transaction", f"{kind} £{amount.get()} on account #{account_no}\n"
+                                           f"Customer: {account['full_name']}?", parent=self.root):
+                    return
+                fn = self.db.deposit if kind == "Deposit" else self.db.withdraw
+                new_balance = fn(self.session, account_no, amount.get(), note.get())
+                amount.set("")
+                status.configure(text=f"{kind} completed. New balance: {pounds(new_balance)}")
+            except (BankError, ValueError, sqlite3.Error) as exc:
+                messagebox.showerror("Transaction rejected", str(exc), parent=self.root)
 
-    label=Label(search_frame,text='Enter account number',font='bold')
-    label.grid(pady=4)
+        self._buttons(panel, [("Check balance", lambda: action("Check"), "TButton"),
+                              ("Deposit", lambda: action("Deposit"), "Accent.TButton"),
+                              ("Withdraw", lambda: action("Withdraw"), "Danger.TButton")])
+        ttk.Label(panel, text="Transactions are committed atomically with their audit and ledger records.",
+                  style="Muted.TLabel").pack(anchor="w", pady=(20, 0))
 
-    entry_acc=Entry(search_frame)
-    entry_acc.grid(pady=4)
+    def show_transfers(self) -> None:
+        assert self.session
+        panel = self._section()
+        ttk.Label(panel, text="Internal account transfer", style="Title.TLabel").pack(anchor="w", pady=(0, 12))
+        values: dict[str, tk.StringVar] = {}
+        for key, label in (("from", "From account number"), ("to", "To account number"),
+                           ("amount", "Transfer amount (£)"), ("note", "Optional reference or note")):
+            ttk.Label(panel, text=label).pack(anchor="w", pady=(12, 5))
+            var = tk.StringVar()
+            values[key] = var
+            ttk.Entry(panel, textvariable=var, width=48).pack(anchor="w")
 
-    button=Button(search_frame,text='update',command=show_all_updateble_content,bg='red')
-    button.grid()
+        def transfer() -> None:
+            try:
+                src = self.db.get_account(self.session, int(values["from"].get()))
+                dst = self.db.get_account(self.session, int(values["to"].get()))
+                if not messagebox.askyesno("Confirm transfer", f"Transfer £{values['amount'].get()}\n"
+                                           f"From #{src['account_no']} · {src['full_name']}\n"
+                                           f"To #{dst['account_no']} · {dst['full_name']}?", parent=self.root):
+                    return
+                ref = self.db.transfer(self.session, src["account_no"], dst["account_no"],
+                                       values["amount"].get(), values["note"].get())
+                messagebox.showinfo("Transfer completed", f"Transfer reference: {ref}", parent=self.root)
+                values["amount"].set("")
+            except (BankError, ValueError, sqlite3.Error) as exc:
+                messagebox.showerror("Transfer rejected", str(exc), parent=self.root)
 
-def allmembers():
-    def clear_list_frame():
-        list_frame.grid_forget()
-        page2()
-    frame1.grid_forget()
-    details=backend.list_all_customers()
-    global tk
+        ttk.Button(panel, text="Confirm internal transfer", style="Accent.TButton", command=transfer).pack(anchor="w", pady=(22, 0))
 
+    def show_history(self) -> None:
+        assert self.session
+        panel = self._section()
+        row = ttk.Frame(panel)
+        row.pack(fill="x", pady=(0, 14))
+        ttk.Label(row, text="Account number (blank = all)").pack(side="left", padx=(0, 12))
+        var = tk.StringVar()
+        ttk.Entry(row, textvariable=var, width=20).pack(side="left", padx=(0, 9))
+        tree: ttk.Treeview
+        def refresh() -> None:
+            acct = int(var.get()) if var.get().strip() else None
+            records = self.db.transactions(self.session, acct)
+            for iid in tree.get_children():
+                tree.delete(iid)
+            for r in records:
+                tree.insert("", "end", values=(r["id"], r["created_at"][:19].replace("T", " "),
+                                                 r["account_no"], r["kind"].replace("_", " "),
+                                                 pounds(r["amount_pence"]), pounds(r["balance_after_pence"]),
+                                                 r["counterparty"] or "", r["transfer_ref"] or "", r["note"]))
+        ttk.Button(row, text="Filter", command=lambda: self._call(refresh)).pack(side="left")
+        ttk.Button(row, text="Export displayed history (CSV)", command=lambda: self._export_history(var.get())).pack(side="left", padx=(8, 0))
+        tree = self._tree(panel, [("id", "ID", 55), ("date", "UTC", 170), ("acct", "Account", 76),
+                                  ("kind", "Operation", 135), ("amount", "Amount", 110),
+                                  ("balance", "After", 110), ("peer", "Other account", 110),
+                                  ("ref", "Transfer ref", 145), ("note", "Note", 180)])
+        refresh()
 
-    global list_frame
-    list_frame=Frame(tk)
-    list_frame.grid(padx=50,pady=50)
-    label=Label(list_frame,text="Acc_no\t\t\tName\t\t\tAge\t\t\tAddress\t\t\tbalance")
-    label.grid(pady=6)
-    for i in details:
-        label=Label(list_frame,text="{}\t\t\t{}\t\t\t{}\t\t\t{}\t\t\t{}".format(i[0],i[1],i[2],i[3],i[4]))
-        label.grid(pady=4)
-
-    button=Button(list_frame,text='Back',width=20,height=2,bg='red',command=clear_list_frame)
-    button.grid()
-    mainloop()
-
-def delete():
-    frame1.grid_forget()
-
-    def search_in_database():
-        def back_page2():
-            search_frame.grid_forget()
-            page2()
-        global result
-        global acc_no
-        acc_no = entry11.get()
-        r=check_string_in_account_no(acc_no)
-        if len(acc_no)!=0 and r:
-            result = backend.check_acc_no(acc_no)
-            print(result)
-            if not result:
-
-                label = Label(search_frame, text="invalid account number")
-                label.grid(pady=2)
-                button = Button(search_frame, text="Exit", command=back_page2)
-                button.grid()
-                mainloop()
+    def _save_csv(self, suggested: str, cols: list[tuple[str, str]], rows: list[dict[str, Any]]) -> None:
+        path = filedialog.asksaveasfilename(parent=self.root, title="Export CSV", defaultextension=".csv",
+                                            initialfile=suggested, filetypes=[("CSV", "*.csv")])
+        if path:
+            try:
+                export_csv(path, cols, rows)
+            except OSError as exc:
+                messagebox.showerror("Export failed", str(exc), parent=self.root)
             else:
-                backend.delete_acc(acc_no)
-                search_frame.grid_forget()
-                page2()
-        else:
-            label = Label(search_frame, text="Enter correct account number")
-            label.grid(pady=2)
-            button = Button(search_frame, text="Exit", command=back_page2)
-            button.grid()
-    def search_acc():
-        global search_frame
-        search_frame = Frame(tk)
-        search_frame.grid(padx=500, pady=300)
-
-        label = Label(search_frame, text="Enter account number", font='bold')
-        label.grid(row=0, pady=6)
-
-        global entry11
-        entry11 = Entry(search_frame)
-        entry11.grid(row=1, pady=6)
-
-        button = Button(search_frame, text="Delete", command=search_in_database)
-        button.grid(row=3)
-
-        mainloop()
-
-    search_acc()
-
-#main page for employees
-def page2():
-    def back_to_main_from_page2():
-        frame1.grid_forget()
-        global frame
-        frame = Frame(tk, bg='black')
-        frame.grid(padx=500, pady=250)
-
-        button = Button(frame, text="Admin", command=admin_login)
-        button.grid(row=0, pady=20)
-
-        button = Button(frame, text="Employee", command=employee_login)
-        button.grid(row=1, pady=20)
-
-        button = Button(frame, text="Exit", command=tk.destroy)
-        button.grid(row=2, pady=20)
-        tk.mainloop()
-
-    frame.grid_forget()
-    global frame1
-    frame1=Frame(tk,bg='black')
-    frame1.grid(padx=500,pady=100)
-    button1 = Button(frame1, text="Create Account", command=create,width=20,height=2)
-    button1.grid(row=0,pady=6)
-    button2 = Button(frame1, text="Show Details", command=search_acc,width=20,height=2)
-    button2.grid(row=1,pady=6)
-    button3 = Button(frame1, text="Add balance", command=add,width=20,height=2)
-    button3.grid(row=2,pady=6)
-    button4 = Button(frame1, text="Withdraw money", command=withdraw,width=20,height=2)
-    button4.grid(row=3,pady=6)
-    button5 = Button(frame1, text="Check balance", command=check,width=20,height=2)
-    button5.grid(row=4,pady=6)
-    button6 = Button(frame1, text="Update Account", command=update,width=20,height=2)
-    button6.grid(row=5,pady=6)
-    button7 = Button(frame1, text="List of all members", command=allmembers,width=20,height=2)
-    button7.grid(row=6,pady=6)
-    button8 = Button(frame1, text="Delete Account", command=delete,width=20,height=2)
-    button8.grid(row=7,pady=6)
-
-    button9 = Button(frame1, text="Exit", command=back_to_main_from_page2,width=20,height=2)
-    button9.grid(row=8,pady=6)
-
-    mainloop()
-
-
-#all buttons of page1
-def create_employee():
-    def create_emp_in_database():
-        def back_to_main_page1_from_create_emp():
-            frame_create_emp.grid_forget()
-            page1()
-
-        name = entry3.get()
-        password = entry4.get()
-        salary = entry16.get()
-        position = entry17.get()
-        if len(name) != 0 and len(password) != 0 and len(salary) != 0 and len(position) != 0:
-            backend.create_employee(name, password, salary, position)
-            frame_create_emp.grid_forget()
-            page1()
-        else:
-            label = Label(frame_create_emp, text="Please fill all entries")
-            label.grid(pady=2)
-
-            button = Button(frame_create_emp, text="Exit", command=back_to_main_page1_from_create_emp, bg='red')
-            button.grid()
-    page1_frame.grid_forget()
-
-    global frame_create_emp
-    frame_create_emp=Frame(tk,bg='black')
-    frame_create_emp.grid(padx=500,pady=200)
-
-    label=Label(frame_create_emp,text='Name:',font='bold')
-    label.grid(row=0,pady=4)
-    global entry3
-    entry3=Entry(frame_create_emp)
-    entry3.grid(row=1,pady=4)
-    label2=Label(frame_create_emp,text='Password',font='bold')
-    label2.grid(row=2,pady=4)
-    global entry4
-    entry4=Entry(frame_create_emp)
-    entry4.grid(row=3,pady=4)
-    label3 = Label(frame_create_emp, text='Salary',font='bold')
-    label3.grid(row=4,pady=4)
-    global entry16
-    entry16 = Entry(frame_create_emp)
-    entry16.grid(row=5,pady=4)
-    label4 = Label(frame_create_emp, text='Position',font='bold')
-    label4.grid(row=6,pady=4)
-    global entry17
-    entry17 = Entry(frame_create_emp)
-    entry17.grid(row=7,pady=4)
-
-    button=Button(frame_create_emp,text='Submit',command=create_emp_in_database,width=15,height=2)
-    button.grid(row=8,pady=4)
-
-    mainloop()
-
-def update_employee():
-    def update_details_of_staff_member():
-        def back_to_page1():
-            show_employee_frame.grid_forget()
-            page1()
-        def update_that_particular_employee():
-            show_employee_frame.grid_forget()
-            def back_to_page1_from_update():
-                update_frame.destroy()
-                page1()
-
-            def update_name_in_database():
-
-                def database_calling():
-                    new_name = entry19.get()
-                    if len(new_name)!=0:
-                        old_name=staff_name.get()
-                        backend.update_employee_name(new_name,old_name)
-                        entry19.destroy()
-                        update_button.destroy()
-                    else:
-                        entry19.destroy()
-                        update_button.destroy()
-                        tkinter.messagebox.showinfo('Error','Please fill entry')
-                global entry19
-                entry19 = Entry(update_frame)
-                entry19.grid(row=1, column=1, padx=4)
-                global update_button
-                update_button = Button(update_frame, text='Update', command=database_calling)
-                update_button.grid(row=1, column=2, padx=4)
-
-            def update_password_in_database():
-
-                def database_calling():
-                    new_password = entry19.get()
-                    old_name=staff_name.get()
-                    if len(new_password)!=0:
-                        backend.update_employee_password(new_password,old_name)
-                        entry19.destroy()
-                        update_button.destroy()
-                    else:
-                        entry19.destroy()
-                        update_button.destroy()
-                        tkinter.messagebox.showinfo('Error','Please Fill Entry')
-                global entry19
-                entry19 = Entry(update_frame)
-                entry19.grid(row=2, column=1, padx=4)
-                global update_button
-                update_button = Button(update_frame, text='Update', command=database_calling)
-                update_button.grid(row=2, column=2, padx=4)
-
-            def update_salary_in_database():
-
-                def database_calling():
-                    new_salary = entry19.get()
-                    r=check_string_in_account_no(new_salary)
-                    if len(new_salary)!=0 and r:
-
-                        old_name=staff_name.get()
-                        backend.update_employee_salary(new_salary,old_name)
-                        entry19.destroy()
-                        update_button.destroy()
-                    else:
-                        entry19.destroy()
-                        update_button.destroy()
-                        tkinter.messagebox.showinfo('Error','Invalid Input')
-
-                global entry19
-                entry19 = Entry(update_frame)
-                entry19.grid(row=3, column=1, padx=4)
-                global update_button
-                update_button = Button(update_frame, text='Update', command=database_calling)
-                update_button.grid(row=3, column=2, padx=4)
-
-            def update_position_in_database():
-
-                def database_calling():
-                    new_position = entry19.get()
-                    if len(new_position)!=0:
-
-                        old_name=staff_name.get()
-                        backend.update_employee_position(new_position,old_name)
-                        entry19.destroy()
-                        update_button.destroy()
-                    else:
-                        entry19.destroy()
-                        update_button.destroy()
-                        tkinter.messagebox.showinfo('Error','Please Fill Entry')
-
-                global entry19
-                entry19 = Entry(update_frame)
-                entry19.grid(row=4, column=1, padx=4)
-                global update_button
-                update_button = Button(update_frame, text='Update', command=database_calling)
-                update_button.grid(row=4, column=2, padx=4)
-
-            global update_frame
-            update_frame = Frame(tk)
-            update_frame.grid(padx=400, pady=250)
-
-            label = Label(update_frame, text='press what do you want to update',font='bold')
-            label.grid(pady=6)
-
-            button = Button(update_frame, text='Name', command=update_name_in_database,width=14,height=2)
-            button.grid(row=1, column=0, padx=2,pady=2)
-
-            button = Button(update_frame, text='password',command=update_password_in_database,width=14,height=2)
-            button.grid(row=2, column=0, padx=2,pady=2)
-
-            button = Button(update_frame, text='salary',command=update_salary_in_database,width=14,height=2)
-            button.grid(row=3, column=0, padx=2,pady=2)
-
-            button = Button(update_frame, text='position',command=update_position_in_database,width=14,height=2)
-            button.grid(row=4, column=0, padx=2,pady=2)
-
-            button = Button(update_frame, text='Back', command=back_to_page1_from_update,width=14,height=2)
-            button.grid(row=5, column=0,pady=2)
-
-
-
-
-        name=staff_name.get()
-        if len(name)!=0:
-            result=backend.check_name_in_staff(name)
-            if result:
-
-                update_that_particular_employee()
-            else:
-                label = Label(show_employee_frame, text='Employee not found')
-                label.grid()
-
-                button = Button(show_employee_frame, text='Exit', command=back_to_page1)
-                button.grid()
-
-        else:
-            label=Label(show_employee_frame,text='Fill the name')
-            label.grid()
-
-            button=Button(show_employee_frame,text='Exit',command=back_to_page1)
-            button.grid()
-
-
-
-
-    #entering name of staff member
-    page1_frame.grid_forget()
-    global show_employee_frame
-    show_employee_frame=Frame(tk)
-    show_employee_frame.grid(padx=300,pady=300)
-
-    label=Label(show_employee_frame,text='Enter name of staff member whom detail would you want to update')
-    label.grid()
-    global staff_name
-    staff_name=Entry(show_employee_frame)
-    staff_name.grid()
-    global update_butoon_for_staff
-    update_butoon_for_staff=Button(show_employee_frame,text='Update Details',command=update_details_of_staff_member)
-    update_butoon_for_staff.grid()
-
-def show_employee():
-    def back_to_main_page1():
-        show_employee_frame.grid_forget()
-        page1()
-    page1_frame.grid_forget()
-
-    global show_employee_frame
-    show_employee_frame=Frame(tk)
-    show_employee_frame.grid(padx=50,pady=50)
-
-    label=Label(show_employee_frame,text='Name\t\t\tSalary\t\t\tPosition\t\t\tpassword',font='bold')
-    label.grid(row=0)
-
-    details=backend.show_employees()
-
-    for i in details:
-        label=Label(show_employee_frame,text="{}\t\t\t{}\t\t\t{}\t\t\t{}".format(i[0],i[1],i[2],i[3]))
-        label.grid(pady=4)
-
-    button=Button(show_employee_frame,text='Exit',command=back_to_main_page1,width=20,height=2,bg='red',font='bold')
-    button.grid()
-
-    mainloop()
-
-def Total_money():
-    def back_to_main_page1_from_total_money():
-        all_money.grid_forget()
-        page1()
-
-    page1_frame.grid_forget()
-
-    all=backend.all_money()
-
-    global all_money
-    all_money=Frame(tk)
-    all_money.grid(padx=500,pady=300)
-
-    label=Label(all_money,text="Total Amount of money")
-    label.grid(row=0,pady=6)
-
-    label=Label(all_money,text='{}'.format(all))
-    label.grid(row=1)
-
-    button=Button(all_money,text="Back",command=back_to_main_page1_from_total_money,width=15,height=2)
-    button.grid(row=3)
-
-    mainloop()
-
-def back_to_main():
-    page1_frame.grid_forget()
-    global frame
-    frame = Frame(tk, bg='black')
-    frame.grid(padx=500, pady=250)
-
-    button = Button(frame, text="Admin", command=admin_login)
-    button.grid(row=0, pady=20)
-
-    button = Button(frame, text="Employee", command=employee_login)
-    button.grid(row=1, pady=20)
-
-    button = Button(frame, text="Exit", command=tk.destroy)
-    button.grid(row=2, pady=20)
-    tk.mainloop()
-
-    mainloop()
-
-#mai page for admin
-def page1():
-    def back_to_main2():
-        admin_frame.grid_forget()
-        global frame
-        frame = Frame(tk, bg='black')
-        frame.grid(padx=500, pady=250)
-
-        button = Button(frame, text="Admin", command=admin_login)
-        button.grid(row=0, pady=20)
-
-        button = Button(frame, text="Employee", command=employee_login)
-        button.grid(row=1, pady=20)
-
-        button = Button(frame, text="Exit", command=tk.destroy)
-        button.grid(row=2, pady=20)
-        tk.mainloop()
-
-        mainloop()
-
-    name=entry1.get()
-    password=entry2.get()
-    if len(name)!=0 and len(password)!=0:
-        result=backend.check_admin(name,password)
-        print(result)
-        if result:
-            admin_frame.grid_forget()
-
-            global page1_frame
-            page1_frame = Frame(tk, bg='black')
-            page1_frame.grid(padx=500, pady=200)
-
-            button10 = Button(page1_frame, text="New Employee", command=create_employee, width=20, height=2)
-            button10.grid(row=0, pady=6)
-
-            button11 = Button(page1_frame, text="Update detail", command=update_employee, width=20, height=2)
-            button11.grid(row=1, pady=6)
-
-            button13 = Button(page1_frame, text="Show All Employee", command=show_employee, width=20, height=2)
-            button13.grid(row=2, pady=6)
-
-            button11 = Button(page1_frame, text="Total Money", command=Total_money, width=20, height=2)
-            button11.grid(row=3, pady=6)
-
-            button12 = Button(page1_frame, text="Back", command=back_to_main, width=20, height=2)
-            button12.grid(row=4, pady=6)
-
-            mainloop()
-        else:
-            label=Label(admin_frame,text="Invalid id and pasasword")
-            label.grid(row=6,pady=10)
-            button=Button(admin_frame,text='Exit',command=back_to_main2)
-            button.grid(row=7)
-            mainloop()
-    else:
-        label = Label(admin_frame, text="Please fill All Entries")
-        label.grid(row=6, pady=10)
-        button = Button(admin_frame, text='Exit', command=back_to_main2)
-        button.grid(row=7)
-        mainloop()
-
-#Login form for employee
-def employee_login():
-    def back_to_main3():
-        employee_frame.grid_forget()
-        global frame
-        frame = Frame(tk, bg='black')
-        frame.grid(padx=400, pady=250)
-
-        button = Button(frame, text="Admin", command=admin_login)
-        button.grid(row=0, pady=20)
-
-        button = Button(frame, text="Employee", command=employee_login)
-        button.grid(row=1, pady=20)
-
-        button = Button(frame, text="Exit", command=tk.destroy)
-        button.grid(row=2, pady=20)
-        tk.mainloop()
-
-        mainloop()
-    def check_emp():
-        name = entry1.get()
-        password = entry2.get()
-        if len(name) != 0 and len(password) != 0:
-            result = backend.check_employee(name, password)
-            print(result)
-            if result:
-                employee_frame.grid_forget()
-                page2()
-            else:
-                label = Label(employee_frame, text="Invalid id and pasasword")
-                label.grid(row=6, pady=10)
-                button = Button(employee_frame, text='Exit', command=back_to_main3)
-                button.grid(row=7)
-
-                mainloop()
-        else:
-            label = Label(employee_frame, text="Please Fill All Entries")
-            label.grid(row=6, pady=10)
-            button = Button(employee_frame, text='Exit', command=back_to_main3)
-            button.grid(row=7)
-
-            mainloop()
-    frame.grid_forget()
-
-    global employee_frame
-    employee_frame = Frame(tk, bg='black')
-    employee_frame.grid(padx=500, pady=200)
-
-    label = Label(employee_frame, text="Employee Login", font='bold')
-    label.grid(row=0, pady=20)
-
-    label1 = Label(employee_frame, text="Name:")
-    label1.grid(row=1, pady=10)
-
-    label2 = Label(employee_frame, text="Password:")
-    label2.grid(row=3, pady=10)
-    global entry1
-    global entry2
-    entry1 = Entry(employee_frame)
-    entry1.grid(row=2, pady=10)
-
-    entry2 = Entry(employee_frame,show='*')
-    entry2.grid(row=4, pady=10)
-
-    button = Button(employee_frame, text="Submit", command=check_emp)
-    button.grid(row=5, pady=20)
-    mainloop()
-
-#Login form for admin
-def admin_login():
-    frame.grid_forget()
-    global admin_frame
-    admin_frame = Frame(tk, bg='black')
-    admin_frame.grid(padx=500, pady=250)
-
-    label = Label(admin_frame, text="Admin Login", font='bold')
-    label.grid(row=0, pady=20)
-
-    label1 = Label(admin_frame, text="Name:")
-    label1.grid(row=1, pady=10)
-
-    label2 = Label(admin_frame, text="Password:")
-    label2.grid(row=3, pady=10)
-    global entry1
-    global entry2
-    entry1 = Entry(admin_frame)
-    entry1.grid(row=2, pady=10)
-
-    entry2 = Entry(admin_frame,show='*')
-    entry2.grid(row=4, pady=10)
-
-    button = Button(admin_frame, text="Submit", command=page1)
-    button.grid(row=5, pady=20)
-    mainloop()
-
-
-
-#creating window
-global tk
-tk=Tk()
-
-
-tk.config(bg='black')
-tk.title('Bank Managing System')
-tk.minsize(1200,800)
-tk.maxsize(1200,800)
-
-
-
-
-global frame
-frame=Frame(tk,bg='black')
-frame.grid(padx=500,pady=250)
-
-
-button=Button(frame,text="Admin",command=admin_login)
-button.grid(row=0,pady=20)
-
-button=Button(frame,text="Employee",command=employee_login)
-button.grid(row=1,pady=20)
-
-button=Button(frame,text="Exit",command=tk.destroy)
-button.grid(row=2,pady=20)
-tk.mainloop()
-
-
-
-
-
-
+                messagebox.showinfo("Export complete", f"Saved {len(rows)} rows.\nKeep exported personal data secure.", parent=self.root)
+
+    def _export_accounts(self, search: str, include_closed: bool) -> None:
+        assert self.session
+        rows = self.db.list_accounts(self.session, search, include_closed)
+        self._save_csv("accounts.csv", [("account_no", "Account number"), ("full_name", "Name"),
+                                         ("age", "Age"), ("address", "Address"),
+                                         ("balance_gbp", "Balance GBP"), ("account_type", "Account type"),
+                                         ("phone", "Phone"), ("status", "Status")],
+                       [{**r, "balance_gbp": f"{r['balance_pence']//100}.{r['balance_pence']%100:02d}"} for r in rows])
+
+    def _export_history(self, account: str) -> None:
+        assert self.session
+        try:
+            rows = self.db.transactions(self.session, int(account) if account.strip() else None, 2000)
+        except (BankError, ValueError) as exc:
+            messagebox.showerror("Invalid filter", str(exc), parent=self.root)
+            return
+        rows = [{**r, "amount_gbp": f"{r['amount_pence']//100}.{r['amount_pence']%100:02d}",
+                 "balance_gbp": f"{r['balance_after_pence']//100}.{r['balance_after_pence']%100:02d}"} for r in rows]
+        self._save_csv("transaction_history.csv", [("id", "ID"), ("created_at", "UTC time"),
+                      ("account_no", "Account"), ("kind", "Kind"), ("amount_gbp", "Amount GBP"),
+                      ("balance_gbp", "Balance after GBP"), ("counterparty", "Counterparty"),
+                      ("transfer_ref", "Transfer ref"), ("note", "Note"), ("actor", "Staff")], rows)
+
+    def show_employees(self) -> None:
+        assert self.session
+        panel = self._section()
+        tree: ttk.Treeview
+        def refresh() -> None:
+            for iid in tree.get_children():
+                tree.delete(iid)
+            for r in self.db.list_employees(self.session):
+                tree.insert("", "end", iid=str(r["id"]), values=(r["id"], r["username"],
+                       r["position"], pounds(r["salary_pence"]), "Enabled" if r["active"] else "Disabled",
+                       "Yes" if r["must_change"] else "No"))
+        self._buttons(panel, [("Create employee", self.new_employee, "Accent.TButton"),
+                              ("Edit employee", lambda: self._with_account(tree, self.edit_employee), "TButton"),
+                              ("Reset password", lambda: self._with_account(tree, self.reset_employee_password), "TButton")])
+        tree = self._tree(panel, [("id", "ID", 60), ("name", "Username", 175),
+                                  ("position", "Position", 180), ("salary", "Salary (GBP)", 135),
+                                  ("active", "Status", 110), ("rotation", "Must change password", 155)])
+        refresh()
+        ttk.Label(panel, text="Passwords are never displayed. Employee password resets require a new temporary passphrase.",
+                  style="Muted.TLabel").pack(anchor="w", pady=(13, 0))
+
+    def new_employee(self) -> None:
+        assert self.session
+        def save(v: dict[str, str]) -> None:
+            self.db.create_employee(self.session, v["username"], v["password"], v["salary"], v["position"])
+            self.navigate("Employees")
+        FormDialog(self.root, "Create employee", [
+            ("username", "Login username", "", False),
+            ("password", "Temporary password (12+ characters)", "", True),
+            ("salary", "Salary in GBP", "0.00", False), ("position", "Position", "Cashier", False)], save,
+            "The employee must change this temporary password on their first login.")
+
+    def edit_employee(self, user_id: int) -> None:
+        assert self.session
+        r = next((row for row in self.db.list_employees(self.session) if row["id"] == user_id), None)
+        if not r:
+            messagebox.showerror("Missing employee", "Employee not found.", parent=self.root)
+            return
+        def save(v: dict[str, str]) -> None:
+            enabled = v["active"].strip().lower()
+            if enabled not in ("yes", "no"):
+                raise BankError("Enabled must be 'yes' or 'no'.")
+            self.db.update_employee(self.session, user_id, username=v["username"], salary=v["salary"],
+                                    position=v["position"], active=enabled == "yes")
+            self.navigate("Employees")
+        FormDialog(self.root, f"Edit employee #{user_id}", [
+            ("username", "Username", r["username"], False),
+            ("salary", "Salary (GBP)", f"{r['salary_pence']//100}.{r['salary_pence']%100:02d}", False),
+            ("position", "Position", r["position"], False),
+            ("active", "Account enabled? (yes/no)", "yes" if r["active"] else "no", False)], save,
+            "Set enabled to 'no' to deactivate without destroying transaction or audit history.")
+
+    def reset_employee_password(self, user_id: int) -> None:
+        assert self.session
+        def save(v: dict[str, str]) -> None:
+            if v["password"] != v["confirm"]:
+                raise BankError("Passwords do not match.")
+            self.db.reset_employee_password(self.session, user_id, v["password"])
+            messagebox.showinfo("Reset complete", "Password reset. Employee must change it at next login.", parent=self.root)
+            self.navigate("Employees")
+        FormDialog(self.root, f"Reset employee #{user_id} password", [
+            ("password", "New temporary password (12+ characters)", "", True),
+            ("confirm", "Confirm password", "", True)], save)
+
+    def show_audit(self) -> None:
+        assert self.session
+        panel = self._section()
+        ttk.Label(panel, text="Recent administrator and staff actions", style="Muted.TLabel").pack(anchor="w", pady=(0, 12))
+        tree = self._tree(panel, [("id", "ID", 55), ("date", "UTC", 195),
+                                  ("staff", "Performed by", 120), ("event", "Event", 220),
+                                  ("target", "Target", 160), ("details", "Details", 290)])
+        for r in self.db.audit_log(self.session):
+            tree.insert("", "end", values=(r["id"], r["created_at"][:19].replace("T", " "),
+                                             r["actor"], r["event"], r["target"], r["details"]))
+
+    def show_settings(self) -> None:
+        assert self.session
+        panel = self._section()
+        ttk.Label(panel, text="Account and local database settings", style="Title.TLabel").pack(anchor="w", pady=(0, 12))
+        ttk.Label(panel, text=f"Signed in as {self.session.username} ({self.session.role})").pack(anchor="w", pady=5)
+        ttk.Label(panel, text=f"Database: {self.db.path}", style="Muted.TLabel", wraplength=750).pack(anchor="w", pady=5)
+        ttk.Button(panel, text="Change my password", command=self.show_password_change).pack(anchor="w", pady=(15, 10))
+        if self.session.role == "admin":
+            ttk.Button(panel, text="Backup SQLite database", style="Accent.TButton", command=self.backup).pack(anchor="w", pady=5)
+            ttk.Label(panel, text="Backups and CSV exports contain private data; store them securely.\n"
+                      "This application is an offline educational project, not a regulated banking platform.",
+                      style="Muted.TLabel").pack(anchor="w", pady=(16, 0))
+
+    def backup(self) -> None:
+        assert self.session
+        target = filedialog.asksaveasfilename(parent=self.root, title="Create database backup", defaultextension=".db",
+                    initialfile="bankmanaging-backup.db", filetypes=[("SQLite database", "*.db")])
+        if not target:
+            return
+        saved = self._call(self.db.backup_database, self.session, target)
+        if saved:
+            messagebox.showinfo("Backup complete", f"Saved backup to:\n{saved}", parent=self.root)
+
+    def exit(self) -> None:
+        self.db.close()
+        self.root.destroy()
+
+    def run(self) -> None:
+        self.root.mainloop()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Offline Bank Manager (educational)")
+    parser.add_argument("--db", type=Path, default=None, help="SQLite database path (default: next to backend.py)")
+    args = parser.parse_args()
+    try:
+        db = BankDB(args.db) if args.db else BankDB()
+    except (BankError, sqlite3.Error, OSError) as exc:
+        # Tk's messagebox creates a small temporary root when needed.
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("Database unavailable", str(exc), parent=root)
+        root.destroy()
+        raise SystemExit(1) from exc
+    BankApp(db).run()
+
+
+if __name__ == "__main__":
+    main()
